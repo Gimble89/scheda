@@ -15,7 +15,7 @@ const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="25.4";
+const APP_VERSION="25.6";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
@@ -884,7 +884,7 @@ function openEx(e){
     ${e.orig?`<button class="revert" id="revbtn">↺ Torna a "${e.orig.n}" (${fmt(e.orig.w)} kg)</button>`:""}
     <div class="lbl2">Immagine o GIF personale (URL)</div>
     <input class="urlin" id="imgurl" placeholder="https://… lascia vuoto per la figura di default" value="${esc(e.img)}">
-        ${gemKey()?`<div class="lbl2">Chiedi al preparatore AI</div>
+        ${anyAIKey()?`<div class="lbl2">Chiedi al preparatore AI</div>
       <button class="genbtn" id="ex_swap">Trovami un'alternativa</button>
       <button class="revert" id="ex_expl" style="margin-top:8px">Come si esegue?</button>
       <button class="revert" id="ex_mac" style="margin-top:8px">Ho davanti un macchinario nuovo</button>`:""}
@@ -1178,22 +1178,22 @@ function renderSettings(){
 
     <div class="card">
       <h4>Analisi automatica</h4>
-      <div class="cfgrow"><span class="cl">Valuta le sedute con l'AI<small>${gemKey()?"chiave attiva"+(SESSION?" · legata al tuo account":" su questo dispositivo"):"chiave non ancora configurata"}</small></span>
+      <div class="cfgrow"><span class="cl">Valuta le sedute con l'AI<small>${anyAIKey()?"chiave attiva"+(SESSION?" · legata al tuo account":" su questo dispositivo"):"chiave non ancora configurata"}</small></span>
         <button id="st_ai">Analizza</button></div>
-      <div class="cfgrow"><span class="cl">Chiave Google<small>configurazione guidata, prova del collegamento e sincronizzazione</small></span>
-        <button id="st_gem">${gemKey()?"Gestisci":"Configura"}</button></div>
-      <div class="cfgrow"><span class="cl">Chiedi al preparatore<small>${gemKey()?((S.chat||[]).length?((S.chat||[]).length+" messaggi in memoria"):"domande sull'allenamento, con la tua scheda sott'occhio"):"serve la chiave Google"}</small></span>
-        <button id="st_chat" ${gemKey()?"":"disabled"}>Apri</button></div>
+      <div class="cfgrow"><span class="cl">Chiave AI<small>Gemini, Groq, Mistral, DeepSeek — configurazione guidata e prova del collegamento</small></span>
+        <button id="st_gem">${anyAIKey()?"Gestisci":"Configura"}</button></div>
+      <div class="cfgrow"><span class="cl">Chiedi al preparatore<small>${anyAIKey()?((S.chat||[]).length?((S.chat||[]).length+" messaggi in memoria"):"domande sull'allenamento, con la tua scheda sott'occhio"):"serve una chiave AI"}</small></span>
+        <button id="st_chat" ${anyAIKey()?"":"disabled"}>Apri</button></div>
       <div class="cfgrow"><span class="cl">Fai rileggere la scheda<small>l'AI segnala squilibri di volume. I carichi restano quelli calcolati dall'app</small></span>
-        <button id="st_rev" ${gemKey()?"":"disabled"}>Revisiona</button></div>
-      <div class="cfgrow"><span class="cl">Importa scheda da foto o testo<small>${gemKey()?"l'AI la legge e la trascrive, con conferma prima di applicare":"serve la chiave Google"}</small></span>
+        <button id="st_rev" ${anyAIKey()?"":"disabled"}>Revisiona</button></div>
+      <div class="cfgrow"><span class="cl">Importa scheda da foto o testo<small>${gemKey()?"l'AI la legge e la trascrive, con conferma prima di applicare":"serve la chiave Google (e' l'unica che legge le foto)"}</small></span>
         <button id="st_imp" ${gemKey()?"":"disabled"}>Importa</button></div>
       <div class="cfgrow"><span class="cl">Nomi dei giorni<small>${(S.days||[]).map(x=>x.id).join(" · ")} — la lettera resta, cambia la descrizione</small></span>
         <button id="st_nomi">Rinomina</button></div>
       ${isOwner()?`<div class="cfgrow"><span class="cl">Moderazione libreria<small>proposte degli utenti in attesa di approvazione</small></span>
         <button id="st_mod">Apri</button></div>`:""}
-      <div class="cfgrow"><span class="cl">Aggiungi un macchinario<small>${gemKey()?"scrivi il nome, l'AI lo identifica e lo mette in libreria":"serve la chiave Google"}</small></span>
-        <button id="st_mac" ${gemKey()?"":"disabled"}>Aggiungi</button></div>
+      <div class="cfgrow"><span class="cl">Aggiungi un macchinario<small>${anyAIKey()?"scrivi il nome, l'AI lo identifica e lo mette in libreria":"serve una chiave AI"}</small></span>
+        <button id="st_mac" ${anyAIKey()?"":"disabled"}>Aggiungi</button></div>
       <div class="cfgrow"><span class="cl">Rivedi il tutorial<small>RIR, superserie, calibrazione, deload</small></span>
         <button id="st_tut">Apri</button></div>
       <div class="cfgrow"><span class="cl">Installa sulla schermata Home<small>${isStandalone()?"gia' installata":"si apre a schermo intero, senza barre"}</small></span>
@@ -1358,7 +1358,7 @@ function randomAdvice(minuti){
   const nota=freschi.length?` ${freschi.join(", ").replace(/, ([^,]*)$/," e $1")} ${freschi.length===1?"l'hai fatto":"li hai fatti"} da poco.`:"";
   return `<div class="aitip" style="display:block"><span class="tiplab">Oggi conviene</span>
     <b>${scelti}</b>.${nota}
-    ${gemKey()?`<button class="revert" id="rai" style="margin-top:8px;padding:8px">Chiedi all'AI cosa allenare</button>`:""}</div>`;
+    ${anyAIKey()?`<button class="revert" id="rai" style="margin-top:8px;padding:8px">Chiedi all'AI cosa allenare</button>`:""}</div>`;
 }
 function renderRandom(){
   const dh=`<div class="dayhead"><div class="eyebrow">Scheda al volo · i tuoi giorni A/B/C restano intatti</div><h2>Random</h2></div>`;
@@ -1978,7 +1978,7 @@ function exportAsk(afterSession){
       <div class="lbl2">Periodo</div>
       <div class="chips" id="eper">${periods.map(([k,l])=>`<button class="chip${kind===k?" on":""}" data-k="${k}">${l}</button>`).join("")}</div>
       <div class="sub" style="margin:8px 0 4px">${n} sedut${n===1?"a":"e"} nel periodo selezionato.</div>
-      ${gemKey()?`<button class="genbtn" id="e_ai" style="margin-bottom:12px">⚡ Analizza subito con l'AI</button>`:
+      ${anyAIKey()?`<button class="genbtn" id="e_ai" style="margin-bottom:12px">⚡ Analizza subito con l'AI</button>`:
         `<button class="alt" id="e_setup" style="width:100%;flex-direction:column;align-items:flex-start;gap:5px;margin-bottom:12px;border-color:var(--acc)">
           <span class="an">Attiva l'analisi automatica</span>
           <small style="color:var(--soft);font-family:inherit">Con una chiave Google gratuita l'app analizza le sedute da sola, senza copiare e incollare.</small></button>`}
@@ -2318,7 +2318,7 @@ Restituisci SOLO il JSON, nulla altro.`;
   try{
     const response=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",{
       method:"POST",
-      headers:{"Content-Type":"application/json","x-goog-api-key":gemKey()},
+      headers:{"Content-Type":"application/json","x-goog-api-key":anyAIKey()},
       body:JSON.stringify({
         contents:[{
           parts:[
@@ -2594,7 +2594,7 @@ sv.onclick=async()=>{
   if(ripW)toast(`Carichi di riferimento ripristinati su ${ripW} esercizi`);
   setTimeout(async()=>{
     await postSessionAsk(entry,d.id);
-    if(gemKey())await sessionClosing(entry,d.id);
+    if(anyAIKey())await sessionClosing(entry,d.id);
     if(typeof maybeNotifPitch==="function"&&!S.notifAsked&&notifState()==="default"){
       maybeNotifPitch();return;
     }
@@ -3280,6 +3280,7 @@ async function pullAIKeys(){
     if(k.gemini_key&&!store.get("gem_key"))store.set("gem_key",k.gemini_key);
     if(k.groq_key&&!store.get("groq_key"))store.set("groq_key",k.groq_key);
     if(k.mistral_key&&!store.get("mistral_key"))store.set("mistral_key",k.mistral_key);
+    if(k.deepseek_key&&!store.get("deepseek_key"))store.set("deepseek_key",k.deepseek_key);
     if(k.ai_provider&&!store.get("ai_provider"))store.set("ai_provider",k.ai_provider);
   }catch(e){}
 }
@@ -3291,13 +3292,14 @@ async function pushAIKeys(){
       headers:{"Authorization":"Bearer "+SESSION.access_token,"apikey":SUPA_KEY,
                "Content-Type":"application/json","Prefer":"resolution=merge-duplicates,return=minimal"},
       body:JSON.stringify({user_id:CLOUD_USER.id,
-        gemini_key:gemKey()||null,groq_key:groqKey()||null,mistral_key:mistralKey()||null,
+        gemini_key:gemKey()||null,groq_key:groqKey()||null,mistral_key:mistralKey()||null,deepseek_key:deepseekKey()||null,
         ai_provider:aiProvider(),aggiornato:new Date().toISOString()})});
   }catch(e){}
 }
 
 const groqKey=()=>store.get("groq_key")||"";
 const mistralKey=()=>store.get("mistral_key")||"";
+const deepseekKey=()=>store.get("deepseek_key")||"";
 const aiProvider=()=>store.get("ai_provider")||"auto";   // auto | gemini | groq | mistral
 const isLimitError=e=>/limite|quota|429|rate/i.test(String(e&&e.message||e||""));
 
@@ -3320,21 +3322,32 @@ async function askOpenAIStyle(url,key,model,prompt){
 }
 const askGroq=p=>askOpenAIStyle("https://api.groq.com/openai/v1/chat/completions",groqKey(),"llama-3.3-70b-versatile",p);
 const askMistral=p=>askOpenAIStyle("https://api.mistral.ai/v1/chat/completions",mistralKey(),"mistral-small-latest",p);
+const askDeepseek=p=>askOpenAIStyle("https://api.deepseek.com/chat/completions",deepseekKey(),"deepseek-chat",p);
 
 /* punto unico di ingresso testuale: rispetta la preferenza, altrimenti
    Gemini -> Groq -> Mistral, passando alla riserva solo su errori di quota */
 async function askAI(prompt){
   const pref=aiProvider();
+  if(pref==="gemini"){if(!gemKey())throw new Error("Chiave Google non impostata.");return askGeminiRaw(prompt)}
   if(pref==="groq"){if(!groqKey())throw new Error("Chiave Groq non impostata.");return askGroq(prompt)}
   if(pref==="mistral"){if(!mistralKey())throw new Error("Chiave Mistral non impostata.");return askMistral(prompt)}
-  if(pref==="gemini"||!groqKey()&&!mistralKey())return askGeminiRaw(prompt);
-  try{return await askGeminiRaw(prompt)}
-  catch(e){
-    if(!isLimitError(e))throw e;
-    if(groqKey()){try{const t=await askGroq(prompt);showDot&&showDot("riserva: Groq");return t}catch(e2){if(!isLimitError(e2))throw e2}}
-    if(mistralKey()){const t=await askMistral(prompt);showDot&&showDot("riserva: Mistral");return t}
-    throw e;
+  if(pref==="deepseek"){if(!deepseekKey())throw new Error("Chiave DeepSeek non impostata.");return askDeepseek(prompt)}
+  /* automatico: si prova nell'ordine SOLO chi ha la chiave, e si passa al
+     successivo unicamente per esaurimento quota — gli altri errori emergono */
+  const chain=[["Gemini",gemKey,askGeminiRaw],["Groq",groqKey,askGroq],
+               ["DeepSeek",deepseekKey,askDeepseek],["Mistral",mistralKey,askMistral]]
+    .filter(([,k])=>k());
+  if(!chain.length)throw new Error("Nessuna chiave AI impostata: configurala dalle impostazioni.");
+  let lastErr=null;
+  for(let i=0;i<chain.length;i++){
+    const [nome,,fn]=chain[i];
+    try{
+      const t=await fn(prompt);
+      if(i>0)showDot&&showDot("riserva: "+nome);
+      return t;
+    }catch(e){lastErr=e;if(!isLimitError(e))throw e}
   }
+  throw lastErr;
 }
 
 async function askGeminiRaw(promptText){
@@ -3381,7 +3394,7 @@ function aiAnalysisAsk(){
       <div class="lbl2">Che tipo di risposta vuoi</div>
       ${AI_MODES.map(m=>`<button class="alt aimode" data-v="${m[0]}" style="width:100%;flex-direction:column;align-items:flex-start;gap:3px;margin-bottom:6px;${aiMode()===m[0]?"border-color:var(--acc)":""}">
         <span class="an">${m[1]}</span><small style="color:var(--soft);font-family:inherit">${m[2]}</small></button>`).join("")}
-      ${gemKey()?"":`<div class="nextbox late" style="margin:10px 0">Prima serve una chiave gratuita di Google AI Studio. Impostala qui sotto: resta su questo dispositivo.</div>`}
+      ${anyAIKey()?"":`<div class="nextbox late" style="margin:10px 0">Prima serve una chiave gratuita di Google AI Studio. Impostala qui sotto: resta su questo dispositivo.</div>`}
       <div class="lbl2">Chiave API Google AI Studio</div>
       <input class="urlin" id="gk" type="password" placeholder="AIza…" value="${esc(gemKey())}">
       <div class="sub" style="margin:-6px 0 10px;font-size:12px">Si ottiene gratis su <b>aistudio.google.com/apikey</b>, senza carta di credito.</div>
@@ -3398,7 +3411,7 @@ function aiAnalysisAsk(){
     sheet.querySelector("#ago").onclick=async()=>{
       const k=sheet.querySelector("#gk").value.trim();
       if(k)setGemKey(k);
-      if(!gemKey()){toast("Inserisci prima la chiave");return}
+      if(!anyAIKey()){toast("Inserisci prima la chiave");return}
       if(!sessionsIn(kind).length){toast("Nessuna seduta nel periodo");return}
       const out=sheet.querySelector("#aout");
       const btn=sheet.querySelector("#ago");
@@ -3490,7 +3503,7 @@ async function logoutCloud(wipeLocal){
   if(wipeLocal){
     store.del("scheda_mu"); store.del("scheda_v3"); store.del("scheda_ts");
     store.del("gem_key");   store.del("supa_uid");
-    store.del("groq_key");  store.del("mistral_key");
+    store.del("groq_key");  store.del("mistral_key");  store.del("deepseek_key");
   }
   authScreen.classList.add("show");
   signUpMode=false; drawAuthMode();
@@ -4114,18 +4127,29 @@ function gemSetupAsk(){
 
       <div class="lbl2" style="margin-top:16px">Provider di riserva — se Gemini esaurisce la quota</div>
       <div class="sub" style="font-size:12px;margin-bottom:8px">Facoltativi e gratuiti. Il passaggio e' automatico quando Gemini risponde "limite raggiunto". Le chiavi restano solo su questo dispositivo.</div>
-      <div class="lbl2">Chiave Groq — console.groq.com</div>
+      <div class="lbl2">Groq — gratuita, velocissima</div>
+      <div class="sub" style="font-size:12px;margin:0 0 6px">Accedi, apri <b>API Keys</b>, premi <b>Create API Key</b> e copia la chiave (inizia con gsk_).</div>
+      <button class="revert" id="gs_groq_open" style="margin-bottom:6px">Apri la console Groq</button>
       <input class="urlin" id="gs_groq" type="password" placeholder="gsk_…" value="${esc(groqKey())}">
-      <div class="lbl2">Chiave Mistral — console.mistral.ai</div>
+
+      <div class="lbl2">Mistral — gratuita, quota mensile</div>
+      <div class="sub" style="font-size:12px;margin:0 0 6px">Accedi, apri <b>API Keys</b>, premi <b>Create new key</b> e copia la chiave.</div>
+      <button class="revert" id="gs_mistral_open" style="margin-bottom:6px">Apri la console Mistral</button>
       <input class="urlin" id="gs_mistral" type="password" placeholder="…" value="${esc(mistralKey())}">
+
+      <div class="lbl2">DeepSeek — cinese, tra le piu' potenti</div>
+      <div class="sub" style="font-size:12px;margin:0 0 6px">Modello di punta a costo bassissimo: richiede una piccola ricarica una tantum (pochi euro durano mesi). Accedi, apri <b>API Keys</b>, crea la chiave e copiala.</div>
+      <button class="revert" id="gs_deepseek_open" style="margin-bottom:6px">Apri la piattaforma DeepSeek</button>
+      <input class="urlin" id="gs_deepseek" type="password" placeholder="sk-…" value="${esc(deepseekKey())}">
+      <div class="sub" style="font-size:12px;margin:2px 0 8px;color:var(--soft)">Groq e Mistral si salvano appena esci dal campo. Il pulsante in fondo conferma tutto insieme.</div>
       <div class="lbl2">Quale usare</div>
       <div class="chips" id="gs_prov">
-        ${[["auto","Automatico"],["gemini","Solo Gemini"],["groq","Solo Groq"],["mistral","Solo Mistral"]].map(([k,l])=>
+        ${[["auto","Automatico"],["gemini","Solo Gemini"],["groq","Solo Groq"],["deepseek","Solo DeepSeek"],["mistral","Solo Mistral"]].map(([k,l])=>
           `<button class="chip${aiProvider()===k?" on":""}" data-p="${k}">${l}</button>`).join("")}
       </div>
       <div class="sub" style="font-size:12px;margin-bottom:12px">Se attivi la sincronizzazione, la chiave viene salvata nella tua riga su Supabase, leggibile solo dal tuo account. Se preferisci non scriverla in cloud, lasciala spenta e reinseriscila sull'altro dispositivo.</div>
 
-      <button class="genbtn" id="gs_save">${has?"Aggiorna la chiave":"Salva e attiva"}</button>
+      <button class="genbtn" id="gs_save">Salva le chiavi</button>
       ${has?`<button class="revert" id="gs_test" style="margin-top:8px">Prova il collegamento</button>
              <button class="revert" id="gs_del" style="margin-top:8px">Rimuovi la chiave</button>`:""}
       <div id="gs_out"></div>
@@ -4137,15 +4161,27 @@ function gemSetupAsk(){
     };
     sheet.querySelector("#gs_groq").onchange=ev=>{store.set("groq_key",ev.target.value.trim());pushAIKeys();toast(SESSION?"Chiave Groq salvata sul tuo account":"Chiave Groq salvata su questo dispositivo")};
     sheet.querySelector("#gs_mistral").onchange=ev=>{store.set("mistral_key",ev.target.value.trim());pushAIKeys();toast(SESSION?"Chiave Mistral salvata sul tuo account":"Chiave Mistral salvata su questo dispositivo")};
+    sheet.querySelector("#gs_deepseek").onchange=ev=>{store.set("deepseek_key",ev.target.value.trim());pushAIKeys();toast(SESSION?"Chiave DeepSeek salvata sul tuo account":"Chiave DeepSeek salvata su questo dispositivo")};
+    const opn=(id,url)=>{const b=sheet.querySelector(id);if(b)b.onclick=()=>{try{window.open(url,"_blank","noopener")}catch(e){}}};
+    opn("#gs_groq_open","https://console.groq.com/keys");
+    opn("#gs_mistral_open","https://console.mistral.ai/api-keys");
+    opn("#gs_deepseek_open","https://platform.deepseek.com/api_keys");
     sheet.querySelectorAll("#gs_prov .chip").forEach(b=>b.onclick=()=>{store.set("ai_provider",b.dataset.p);pushAIKeys();draw()});
 
     sheet.querySelector("#gs_save").onclick=async()=>{
+      // salva anche Groq e Mistral, cosi' un solo pulsante conferma tutto
+      const kg=sheet.querySelector("#gs_groq").value.trim();
+      const km=sheet.querySelector("#gs_mistral").value.trim();
+      const kd=sheet.querySelector("#gs_deepseek").value.trim();
+      store.set("groq_key",kg);store.set("mistral_key",km);store.set("deepseek_key",kd);
       const k=sheet.querySelector("#gs_key").value.trim();
-      if(!k){toast("Incolla prima la chiave");return}
-      if(!/^AIza/.test(k)&&!await ask("Questa chiave non inizia con <b>AIza</b>: di solito e' un errore di copia.<br><small style='color:var(--soft)'>La salvo lo stesso?</small>","Salva"))return;
-      setGemKey(k);
-      S.ai.setupDone=true;save();
-      toast(SESSION?"Chiave salvata sul tuo account":"Chiave salvata su questo dispositivo");
+      if(k){
+        if(!/^AIza/.test(k)&&!await ask("La chiave <b>Google</b> di solito inizia con <b>AIza</b>: potrebbe essere un errore di copia.<br><small style='color:var(--soft)'>La salvo lo stesso?</small>","Salva"))return;
+        setGemKey(k);
+        if(!S.ai)S.ai={};S.ai.setupDone=true;save();
+      }
+      pushAIKeys();
+      toast(SESSION?"Chiavi salvate sul tuo account":"Chiavi salvate su questo dispositivo");
       draw();
     };
     const t=sheet.querySelector("#gs_test");
@@ -4214,7 +4250,7 @@ function tutorialAsk(from){
 
 /* proposta della chiave AI, una volta sola e solo se non e' gia' configurata */
 function maybeKeyPitch(){
-  if(gemKey()||(S.ai&&S.ai.pitchDone))return;
+  if(anyAIKey()||(S.ai&&S.ai.pitchDone))return;
   setTimeout(()=>{
     const sheet=document.getElementById("sheet");
     sheet.innerHTML=`
@@ -4233,7 +4269,7 @@ function maybeKeyPitch(){
 function firstRunFlow(){
   adoptCloudKey();
   if(!S.tutDone){tutorialAsk(false);return}
-  if(!gemKey()&&!(S.ai&&S.ai.pitchDone)){maybeKeyPitch();return}
+  if(!anyAIKey()&&!(S.ai&&S.ai.pitchDone)){maybeKeyPitch();return}
   if(typeof maybeBreakAsk==="function"){
     const g=daysSinceLast();
     if(g!=null&&breakPlan(g)){maybeBreakAsk();return}
@@ -4465,7 +4501,7 @@ async function postSessionAsk(entry,dayId){
   sheet.innerHTML=`<h3>Com'è andata?</h3><div class="sub">Due domande, dieci secondi. Servono a spiegare i numeri.</div>
     <div class="sub" style="margin-top:14px">Preparo le domande…</div>`;
 
-  if(gemKey()){
+  if(anyAIKey()){
     try{
       const P=["Sei un personal trainer. Guarda la seduta appena conclusa e formula ESATTAMENTE 2 domande brevi, specifiche e a risposta chiusa, per capire cosa c'è dietro i numeri.",
         "Niente domande generiche se i dati suggeriscono qualcosa di preciso (un carico fermo, una serie non completata, un esercizio nuovo).",
@@ -4955,7 +4991,7 @@ async function maybeBreakAsk(){
     <div class="cues" style="margin-top:12px;padding:13px">${p.msg}</div>
     ${p.cut?`<button class="genbtn" id="bk_cut" style="margin-top:14px">Riduci i carichi del ${p.cut}% per oggi</button>`:""}
     ${p.recal?`<button class="genbtn" id="bk_recal" style="margin-top:${p.cut?"8":"14"}px">Ritara i carichi con le domande</button>`:""}
-    ${gemKey()?`<button class="revert" id="bk_ai" style="margin-top:8px">Parlane col preparatore AI</button>`:""}
+    ${anyAIKey()?`<button class="revert" id="bk_ai" style="margin-top:8px">Parlane col preparatore AI</button>`:""}
     <button class="skipbtn" id="bk_no">Vado con i carichi normali</button>`;
   document.getElementById("modal").classList.add("on");
   const cut=sheet.querySelector("#bk_cut");
@@ -5219,7 +5255,7 @@ async function applyChatPatch(enc,soloOggi){
 
 /* ---- 3. chiusura della giornata: unisce numeri e risposte ---- */
 async function sessionClosing(entry,dayId){
-  if(!gemKey())return;
+  if(!anyAIKey())return;
   const sheet=document.getElementById("sheet");
   document.getElementById("modal").classList.add("on");
   sheet.innerHTML=`<h3>Chiusura della giornata</h3><div class="sub" style="margin-top:12px">Rileggo la seduta…</div>`;
@@ -5273,7 +5309,7 @@ async function loadTipFor(dayId){
   const cached=store.get(key);
   if(cached!=null)return cached;
   const sig=signalsFor(dayId);
-  if(!sig.length||!gemKey()){store.set(key,"");return ""}
+  if(!sig.length||!anyAIKey()){store.set(key,"");return ""}
   try{
     const P=["Sei un personal trainer. Ecco i segnali che l'app ha calcolato prima dell'allenamento di oggi.",
       "Scegli il PIÙ rilevante e scrivilo in UNA riga, massimo 22 parole, in italiano, diretto.",
@@ -5632,7 +5668,7 @@ function editWarmAsk(d){
           <span class="cl" data-mob="${esc(m[0])}" style="cursor:pointer">${esc(m[0])}<small>${m[2].join(", ")}</small></span>
           <button class="genbtn wadd" data-n="${esc(m[0])}" style="padding:6px 14px">+</button>
         </div>`).join("")}
-      ${gemKey()?`<div class="lbl2" style="margin-top:14px">Chiedi al preparatore</div>
+      ${anyAIKey()?`<div class="lbl2" style="margin-top:14px">Chiedi al preparatore</div>
         <input class="urlin" id="wq" placeholder="es. ho la spalla rigida, cosa aggiungo?">
         <button class="revert" id="wgo">Chiedi</button><div id="wout"></div>`:""}
       <button class="revert" id="wreset" style="margin-top:14px">Rigenera dagli esercizi del giorno</button>
@@ -5799,13 +5835,16 @@ function renameDaysAsk(){
 (function(){
   const fab=document.getElementById("fab");
   if(!fab)return;
-  fab.onclick=()=>{if(typeof aiChatAsk==="function")aiChatAsk()};
+  fab.onclick=()=>{
+    if(!anyAIKey()){gemSetupAsk();return}   // niente chiavi: porta alla configurazione guidata
+    if(typeof aiChatAsk==="function")aiChatAsk();
+  };
   const agg=()=>{
     const dentro=["A","B","C","D","E","RND","LOG","BODY"].includes(view);
     const barra=document.getElementById("bar");
     const timer=barra&&barra.classList.contains("run");
     const giu=window.scrollY>220;
-    fab.classList.toggle("on", !!(dentro&&giu&&!timer&&typeof gemKey==="function"&&gemKey()));
+    fab.classList.toggle("on", !!(dentro&&giu&&!timer));
   };
   window.addEventListener("scroll",agg,{passive:true});
   setInterval(agg,700);
