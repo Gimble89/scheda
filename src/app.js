@@ -15,7 +15,7 @@ const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="25.1";
+const APP_VERSION="25.4";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
@@ -848,7 +848,29 @@ function predictBlock(e){
 
 /* ---------------- scheda esercizio ---------------- */
 function openEx(e){
-  const list=ALT[e.n]||(e.orig&&ALT[e.orig.n])||[], cues=CUE[e.ic]||[];
+  /* Alternative: prima la tabella curata, poi la libreria come rete.
+     La tabella ALT copre solo gli esercizi della scheda originale: chi
+     sostituisce (es. Perfect Squat -> Hack squat) restava senza proposte.
+     Il fallback pesca dalla libreria gli esercizi con lo stesso schema
+     motorio, con il carico stimato dal rapporto tra i coefficienti. */
+  let list=ALT[e.n]||(e.orig&&ALT[e.orig.n])||[];
+  if(!list.length){
+    const cur=LIBN[e.n];
+    if(cur){
+      list=LIB.filter(a=>{
+          const li=LIBN[a[0]];
+          return li&&li.ic===cur.ic&&li.n!==e.n&&li.grp!=="Elastici";
+        })
+        .sort((a,b)=>(LIBN[b[0]].k||0)-(LIBN[a[0]].k||0))
+        .slice(0,5)
+        .map(a=>{
+          const li=LIBN[a[0]];
+          const ratio=(cur.k>0&&li.k>0)?Math.round(li.k/cur.k*100)/100:0;
+          return [li.n,ratio,li.ic];
+        });
+    }
+  }
+  const cues=CUE[e.ic]||[];
   const yt="https://www.youtube.com/results?search_query="+encodeURIComponent(e.n+" esecuzione tecnica");
   const sheet=document.getElementById("sheet");
   sheet.innerHTML=`
@@ -872,6 +894,7 @@ function openEx(e){
       return `<button class="alt" data-i="${i}"><span class="an">${a[0]}</span>
         <span class="aw">${sug?fmt(sug)+" kg":"corpo libero"}<em>stima</em></span></button>`;
     }).join(""):`<div class="empty">Nessuna alternativa in archivio.</div>`}
+    <button class="revert" id="swapany" style="margin-top:4px">Sostituisci con un altro esercizio della libreria…</button>
     <button class="closebtn" id="mclose">Chiudi</button>`;
   const u=sheet.querySelector("#imgurl");
   u.onchange=()=>{e.img=u.value.trim();save();openEx(e);render()};
@@ -898,8 +921,56 @@ function openEx(e){
   if(xp)xp.onclick=()=>aiExplainAsk(e);
   const xm=sheet.querySelector("#ex_mac");
   if(xm)xm.onclick=addMachineAsk;
+  const sa=sheet.querySelector("#swapany");
+  if(sa)sa.onclick=()=>swapFromLibraryAsk(e);
   sheet.querySelector("#mclose").onclick=closeModal;
   document.getElementById("modal").classList.add("on");
+}
+
+/* Sostituzione libera: qualunque esercizio della libreria, anche di un altro
+   schema motorio. Prima la lista mostra i compatibili (stesso movimento),
+   poi tutti gli altri: la scelta resta all'utente, con carico stimato. */
+function swapFromLibraryAsk(e){
+  const sheet=document.getElementById("sheet");
+  let q="";
+  const draw=()=>{
+    const cur=LIBN[e.n];
+    const ql=q.toLowerCase();
+    const items=LIB.filter(a=>a[0]!==e.n&&(!ql||a[0].toLowerCase().includes(ql)));
+    // compatibili (stesso movimento) prima, poi il resto
+    items.sort((a,b)=>{
+      const ca=cur&&LIBN[a[0]].ic===cur.ic?0:1, cb=cur&&LIBN[b[0]].ic===cur.ic?0:1;
+      if(ca!==cb)return ca-cb;
+      return (LIBN[b[0]].k||0)-(LIBN[a[0]].k||0);
+    });
+    sheet.innerHTML=`
+      <h3>Sostituisci ${esc(e.n)}</h3>
+      <div class="sub">Prima i movimenti compatibili, poi tutti gli altri. Il carico proposto e' stimato sui tuoi riferimenti.</div>
+      <input class="searchin" id="sq" placeholder="Cerca…" value="${esc(q)}">
+      <div id="slist">${items.slice(0,40).map(a=>{
+        const li=LIBN[a[0]];
+        const est=li.k>0?estimateFor(li.n):0;
+        const comp=cur&&li.ic===cur.ic;
+        return `<button class="alt spick" data-n="${esc(li.n)}">
+          <span class="an">${esc(li.n)}<small>${esc(li.grp)}${comp?" · stesso movimento":" · movimento diverso"}</small></span>
+          <span class="aw">${est?fmt(est)+" kg":"corpo libero"}<em>stima</em></span></button>`;
+      }).join("")||`<div class="empty">Nessun esercizio trovato.</div>`}</div>
+      <button class="closebtn" id="sclose">Annulla</button>`;
+    const si=sheet.querySelector("#sq");
+    si.oninput=()=>{q=si.value;draw();sheet.querySelector("#sq").focus()};
+    sheet.querySelector("#sclose").onclick=()=>openEx(e);
+    sheet.querySelectorAll(".spick").forEach(b=>b.onclick=async()=>{
+      const li=LIBN[b.dataset.n];if(!li)return;
+      const est=li.k>0?estimateFor(li.n):0;
+      if(!await ask(`Sostituisco <b>${esc(e.n)}</b> con <b>${esc(li.n)}</b> ${est?"a <b>"+fmt(est)+" kg</b> (stima)":"a corpo libero"}?<br><small style="color:var(--soft)">Potrai tornare all'originale in ogni momento.</small>`,"Sostituisci"))return;
+      if(!e.orig)e.orig={n:e.n,ic:e.ic,w:e.w};
+      e.n=li.n;e.w=est;e.ic=li.ic;e.img="";
+      if(li.st)e.inc=li.st;
+      e.sets.forEach(s2=>{s2.w=est;s2.done=false;s2.r=""});
+      save();closeModal();render();toast(`Ora nella scheda: ${li.n}`);
+    });
+  };
+  draw();
 }
 function closeModal(){document.getElementById("modal").classList.remove("on")}
 document.getElementById("modal").onclick=ev=>{if(ev.target.id==="modal")closeModal()};
@@ -1107,7 +1178,7 @@ function renderSettings(){
 
     <div class="card">
       <h4>Analisi automatica</h4>
-      <div class="cfgrow"><span class="cl">Valuta le sedute con l'AI<small>${gemKey()?"chiave attiva"+(keySync()?" e sincronizzata":" su questo dispositivo"):"chiave non ancora configurata"}</small></span>
+      <div class="cfgrow"><span class="cl">Valuta le sedute con l'AI<small>${gemKey()?"chiave attiva"+(SESSION?" · legata al tuo account":" su questo dispositivo"):"chiave non ancora configurata"}</small></span>
         <button id="st_ai">Analizza</button></div>
       <div class="cfgrow"><span class="cl">Chiave Google<small>configurazione guidata, prova del collegamento e sincronizzazione</small></span>
         <button id="st_gem">${gemKey()?"Gestisci":"Configura"}</button></div>
@@ -3171,6 +3242,7 @@ const aiMode=()=>store.get("ai_mode")||"breve";
 const GEM_MODELS=[["gemini-3.5-flash","Flash — piu' capace"],["gemini-3.1-flash-lite","Flash-Lite — piu' veloce"]];
 const GEM_DEFAULT="gemini-3.5-flash";
 const gemKey=()=>store.get("gem_key")||"";
+const anyAIKey=()=>!!(gemKey()||store.get("groq_key")||store.get("mistral_key"));
 function gemModel(){
   const m=store.get("gem_model");
   // chi aveva gia' scelto un modello ritirato viene spostato in automatico
@@ -3181,7 +3253,91 @@ function gemModel(){
   return m;
 }
 
-async function askGemini(promptText){
+
+/* ============ PROVIDER DI RISERVA: GROQ E MISTRAL ============
+   Quando Gemini esaurisce la quota giornaliera, la richiesta passa in
+   automatico al primo provider di riserva configurato. Le chiavi restano
+   SOLO su questo dispositivo (localStorage), non vengono mai sincronizzate
+   in cloud ne' incluse nei backup. La foto della scheda resta su Gemini:
+   e' l'unico dei tre con la visione affidabile. */
+
+/* ============ CHIAVI AI LEGATE ALL'ACCOUNT ============
+   Le chiavi (Gemini, Groq, Mistral) e la preferenza di provider vivono nella
+   tabella user_ai_keys su Supabase, una riga per utente, protetta da RLS:
+   solo il proprietario puo' leggerla e scriverla. localStorage resta la copia
+   di lavoro (offline-first); il cloud e' lo specchio che le porta sugli altri
+   dispositivi al login. Al logout con pulizia si svuota SOLO il locale: la
+   copia in cloud resta per il prossimo accesso. */
+async function pullAIKeys(){
+  if(!SESSION||!CLOUD_USER)return;
+  try{
+    const r=await fetch(`${SUPA_URL}/rest/v1/user_ai_keys?user_id=eq.${CLOUD_USER.id}&select=*`,{
+      headers:{"Authorization":"Bearer "+SESSION.access_token,"apikey":SUPA_KEY}});
+    if(!r.ok)return;
+    const rows=await r.json().catch(()=>[]);
+    const k=rows&&rows[0]; if(!k)return;
+    /* il locale vince se presente: e' l'ultima volonta' espressa su QUESTO device */
+    if(k.gemini_key&&!store.get("gem_key"))store.set("gem_key",k.gemini_key);
+    if(k.groq_key&&!store.get("groq_key"))store.set("groq_key",k.groq_key);
+    if(k.mistral_key&&!store.get("mistral_key"))store.set("mistral_key",k.mistral_key);
+    if(k.ai_provider&&!store.get("ai_provider"))store.set("ai_provider",k.ai_provider);
+  }catch(e){}
+}
+async function pushAIKeys(){
+  if(!SESSION||!CLOUD_USER)return;
+  try{
+    await fetch(`${SUPA_URL}/rest/v1/user_ai_keys?on_conflict=user_id`,{
+      method:"POST",
+      headers:{"Authorization":"Bearer "+SESSION.access_token,"apikey":SUPA_KEY,
+               "Content-Type":"application/json","Prefer":"resolution=merge-duplicates,return=minimal"},
+      body:JSON.stringify({user_id:CLOUD_USER.id,
+        gemini_key:gemKey()||null,groq_key:groqKey()||null,mistral_key:mistralKey()||null,
+        ai_provider:aiProvider(),aggiornato:new Date().toISOString()})});
+  }catch(e){}
+}
+
+const groqKey=()=>store.get("groq_key")||"";
+const mistralKey=()=>store.get("mistral_key")||"";
+const aiProvider=()=>store.get("ai_provider")||"auto";   // auto | gemini | groq | mistral
+const isLimitError=e=>/limite|quota|429|rate/i.test(String(e&&e.message||e||""));
+
+async function askOpenAIStyle(url,key,model,prompt){
+  const r=await fetch(url,{
+    method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
+    body:JSON.stringify({model:model,messages:[{role:"user",content:prompt}]})
+  });
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok){
+    const m=(j.error&&(j.error.message||j.error))||"";
+    if(r.status===429)throw new Error("Limite raggiunto anche su questo provider.");
+    if(r.status===401)throw new Error("Chiave non valida per questo provider.");
+    throw new Error(String(m)||"Errore "+r.status);
+  }
+  const txt=j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content;
+  if(!txt)throw new Error("Risposta vuota dal provider.");
+  return txt;
+}
+const askGroq=p=>askOpenAIStyle("https://api.groq.com/openai/v1/chat/completions",groqKey(),"llama-3.3-70b-versatile",p);
+const askMistral=p=>askOpenAIStyle("https://api.mistral.ai/v1/chat/completions",mistralKey(),"mistral-small-latest",p);
+
+/* punto unico di ingresso testuale: rispetta la preferenza, altrimenti
+   Gemini -> Groq -> Mistral, passando alla riserva solo su errori di quota */
+async function askAI(prompt){
+  const pref=aiProvider();
+  if(pref==="groq"){if(!groqKey())throw new Error("Chiave Groq non impostata.");return askGroq(prompt)}
+  if(pref==="mistral"){if(!mistralKey())throw new Error("Chiave Mistral non impostata.");return askMistral(prompt)}
+  if(pref==="gemini"||!groqKey()&&!mistralKey())return askGeminiRaw(prompt);
+  try{return await askGeminiRaw(prompt)}
+  catch(e){
+    if(!isLimitError(e))throw e;
+    if(groqKey()){try{const t=await askGroq(prompt);showDot&&showDot("riserva: Groq");return t}catch(e2){if(!isLimitError(e2))throw e2}}
+    if(mistralKey()){const t=await askMistral(prompt);showDot&&showDot("riserva: Mistral");return t}
+    throw e;
+  }
+}
+
+async function askGeminiRaw(promptText){
   const key=gemKey();
   if(!key)throw new Error("Nessuna chiave impostata.");
   const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${gemModel()}:generateContent`,{
@@ -3237,7 +3393,7 @@ function aiAnalysisAsk(){
     sheet.querySelectorAll("#aper .chip").forEach(b=>b.onclick=()=>{kind=b.dataset.k;store.set("exp_period",kind);draw()});
     sheet.querySelectorAll("#amod .chip").forEach(b=>b.onclick=()=>{store.set("gem_model",b.dataset.m);draw()});
     sheet.querySelectorAll(".aimode").forEach(b=>b.onclick=()=>{store.set("ai_mode",b.dataset.v);draw()});
-    sheet.querySelector("#gk").onchange=e=>{setGemKey(e.target.value);toast(keySync()?"Chiave salvata e sincronizzata":"Chiave salvata su questo dispositivo")};
+    sheet.querySelector("#gk").onchange=e=>{setGemKey(e.target.value);toast(SESSION?"Chiave salvata sul tuo account":"Chiave salvata su questo dispositivo")};
     sheet.querySelector("#aclose").onclick=closeModal;
     sheet.querySelector("#ago").onclick=async()=>{
       const k=sheet.querySelector("#gk").value.trim();
@@ -3249,7 +3405,7 @@ function aiAnalysisAsk(){
       btn.disabled=true;btn.textContent="Analisi in corso…";
       out.innerHTML=`<div class="sub" style="margin-top:12px">Sto mandando i dati e aspettando la risposta. Di solito 10–30 secondi.</div>`;
       try{
-        const txt=await askGemini(buildPromptMd(kind,aiMode()));
+        const txt=await askAI(buildPromptMd(kind,aiMode()));
         const patch=extractPatch(txt);
         out.innerHTML=`
           <div class="lbl2" style="margin-top:16px">Valutazione</div>
@@ -3317,6 +3473,7 @@ async function enterApp(session){
   refreshOwnerRole();          // il ruolo moderatore arriva dal database, non dal sorgente
   safeStart();                 // disegna subito dai dati locali: nessuna attesa
   await pullAndMerge();        // poi allinea col cloud
+  await pullAIKeys();          // e recupera le chiavi AI legate all'account
   render(); updateBarInfo();
   afterLoginFlow();
 }
@@ -3333,6 +3490,7 @@ async function logoutCloud(wipeLocal){
   if(wipeLocal){
     store.del("scheda_mu"); store.del("scheda_v3"); store.del("scheda_ts");
     store.del("gem_key");   store.del("supa_uid");
+    store.del("groq_key");  store.del("mistral_key");
   }
   authScreen.classList.add("show");
   signUpMode=false; drawAuthMode();
@@ -3906,19 +4064,23 @@ function schedeAsk(){
    Con l'interruttore acceso viene scritta anche nella riga Supabase dell'utente,
    protetta dalle regole RLS, cosi' lo segue su telefono e computer. */
 
-const keySync=()=>!!(S&&S.ai&&S.ai.syncKey);
 
 function setGemKey(k){
   k=(k||"").trim();
   store.set("gem_key",k);
-  if(!S.ai)S.ai={};
-  if(keySync()){S.ai.key=k;save()}
-  else if(S.ai.key){delete S.ai.key;save()}
+  /* la chiave non entra piu' nello stato S (e quindi nei backup): la
+     sincronizzazione passa dalla tabella dedicata, legata all'account */
+  if(S.ai&&S.ai.key){delete S.ai.key;save()}
+  pushAIKeys();
 }
 /* all'avvio: se la chiave arriva dal cloud e qui non c'e', la si adotta */
 function adoptCloudKey(){
-  if(S&&S.ai&&S.ai.syncKey&&S.ai.key&&!store.get("gem_key"))
-    store.set("gem_key",S.ai.key);
+  /* migrazione dal vecchio meccanismo (chiave dentro lo stato): la si adotta
+     una volta, la si spinge nella tabella dedicata e si ripulisce lo stato */
+  if(S&&S.ai&&S.ai.key){
+    if(!store.get("gem_key"))store.set("gem_key",S.ai.key);
+    delete S.ai.key;save();pushAIKeys();
+  }
 }
 
 function gemSetupAsk(){
@@ -3946,8 +4108,20 @@ function gemSetupAsk(){
       <div class="lbl2">La tua chiave</div>
       <input class="urlin" id="gs_key" type="password" placeholder="AIza…" value="${esc(gemKey())}">
       <div class="cfgrow" style="padding:10px 0">
-        <span class="cl">Sincronizza sui miei dispositivi<small>${keySync()?"la chiave ti segue su telefono e computer":"resta solo su questo dispositivo"}</small></span>
-        <button id="gs_sync" class="${keySync()?"on":""}">${keySync()?"Sì":"No"}</button>
+        <span class="cl">Legata al tuo account<small>${SESSION?"le chiavi ti seguono su ogni dispositivo dove accedi":"offline: restano su questo dispositivo finche' non accedi"}</small></span>
+        <span class="lbl">${SESSION?"sincronizzata":"solo locale"}</span>
+      </div>
+
+      <div class="lbl2" style="margin-top:16px">Provider di riserva — se Gemini esaurisce la quota</div>
+      <div class="sub" style="font-size:12px;margin-bottom:8px">Facoltativi e gratuiti. Il passaggio e' automatico quando Gemini risponde "limite raggiunto". Le chiavi restano solo su questo dispositivo.</div>
+      <div class="lbl2">Chiave Groq — console.groq.com</div>
+      <input class="urlin" id="gs_groq" type="password" placeholder="gsk_…" value="${esc(groqKey())}">
+      <div class="lbl2">Chiave Mistral — console.mistral.ai</div>
+      <input class="urlin" id="gs_mistral" type="password" placeholder="…" value="${esc(mistralKey())}">
+      <div class="lbl2">Quale usare</div>
+      <div class="chips" id="gs_prov">
+        ${[["auto","Automatico"],["gemini","Solo Gemini"],["groq","Solo Groq"],["mistral","Solo Mistral"]].map(([k,l])=>
+          `<button class="chip${aiProvider()===k?" on":""}" data-p="${k}">${l}</button>`).join("")}
       </div>
       <div class="sub" style="font-size:12px;margin-bottom:12px">Se attivi la sincronizzazione, la chiave viene salvata nella tua riga su Supabase, leggibile solo dal tuo account. Se preferisci non scriverla in cloud, lasciala spenta e reinseriscila sull'altro dispositivo.</div>
 
@@ -3961,19 +4135,17 @@ function gemSetupAsk(){
     sheet.querySelector("#gs_open").onclick=()=>{
       try{window.open("https://aistudio.google.com/apikey","_blank","noopener")}catch(e){}
     };
-    sheet.querySelector("#gs_sync").onclick=()=>{
-      if(!S.ai)S.ai={};
-      S.ai.syncKey=!S.ai.syncKey;
-      setGemKey(sheet.querySelector("#gs_key").value);
-      save();draw();
-    };
+    sheet.querySelector("#gs_groq").onchange=ev=>{store.set("groq_key",ev.target.value.trim());pushAIKeys();toast(SESSION?"Chiave Groq salvata sul tuo account":"Chiave Groq salvata su questo dispositivo")};
+    sheet.querySelector("#gs_mistral").onchange=ev=>{store.set("mistral_key",ev.target.value.trim());pushAIKeys();toast(SESSION?"Chiave Mistral salvata sul tuo account":"Chiave Mistral salvata su questo dispositivo")};
+    sheet.querySelectorAll("#gs_prov .chip").forEach(b=>b.onclick=()=>{store.set("ai_provider",b.dataset.p);pushAIKeys();draw()});
+
     sheet.querySelector("#gs_save").onclick=async()=>{
       const k=sheet.querySelector("#gs_key").value.trim();
       if(!k){toast("Incolla prima la chiave");return}
       if(!/^AIza/.test(k)&&!await ask("Questa chiave non inizia con <b>AIza</b>: di solito e' un errore di copia.<br><small style='color:var(--soft)'>La salvo lo stesso?</small>","Salva"))return;
       setGemKey(k);
       S.ai.setupDone=true;save();
-      toast(keySync()?"Chiave salvata e sincronizzata":"Chiave salvata su questo dispositivo");
+      toast(SESSION?"Chiave salvata sul tuo account":"Chiave salvata su questo dispositivo");
       draw();
     };
     const t=sheet.querySelector("#gs_test");
@@ -3981,7 +4153,7 @@ function gemSetupAsk(){
       const out=sheet.querySelector("#gs_out");
       out.innerHTML=`<div class="sub" style="margin-top:12px">Provo il collegamento…</div>`;
       try{
-        const r=await askGemini("Rispondi con una sola parola: pronto");
+        const r=await askAI("Rispondi con una sola parola: pronto");
         out.innerHTML=`<div class="nextbox" style="margin-top:12px">Collegamento riuscito. Risposta del modello: <b>${esc(r.trim().slice(0,40))}</b></div>`;
       }catch(e){
         out.innerHTML=`<div class="nextbox late" style="margin-top:12px">${esc(e.message||"Errore")}</div>`;
@@ -4090,7 +4262,7 @@ function parseJSONLoose(t){
   return JSON.parse(cand);
 }
 async function askGeminiJSON(prompt){
-  const t=await askGemini(prompt+"\n\nRispondi ESCLUSIVAMENTE con JSON valido, senza backtick, senza testo prima o dopo.");
+  const t=await askAI(prompt+"\n\nRispondi ESCLUSIVAMENTE con JSON valido, senza backtick, senza testo prima o dopo.");
   try{return parseJSONLoose(t)}catch(e){throw new Error("Risposta non interpretabile. Riprova.")}
 }
 
@@ -4098,6 +4270,33 @@ const GOALTXT=()=>{
   const g=(S.profile&&S.profile.goal)||"";
   return (GOALS.find(x=>x[0]===g)||[])[1]||"ricomposizione corporea";
 };
+
+/* posizione esatta nell'allenamento: giorno, esercizio in corso, avanzamento */
+function ctxPosition(dayId){
+  const d=dayId==="RND"&&S.rnd?{id:"RANDOM",focus:S.rnd.focus,ex:S.rnd.ex}:(S.days||[]).find(x=>x.id===dayId);
+  if(!d)return "POSIZIONE: fuori dalla scheda (tab "+dayId+").";
+  let tot=0,fatte=0,inCorso=null;
+  (d.ex||[]).forEach(e=>{
+    const dn=(e.sets||[]).filter(x=>x.done).length, t=(e.sets||[]).length;
+    tot+=t;fatte+=dn;
+    if(!inCorso&&dn>0&&dn<t)inCorso=e.n+" (serie "+(dn+1)+" di "+t+")";
+    if(!inCorso&&dn===0&&fatte>0)inCorso=e.n+" (prossimo)";
+  });
+  const L=["POSIZIONE ATTUALE: giorno "+d.id+" — "+(d.focus||"")+".",
+    "Avanzamento: "+fatte+"/"+tot+" serie completate"+(sessStart?", "+sessMinutes()+" minuti di seduta":", seduta non ancora avviata")+".",
+    inCorso?"Esercizio in corso: "+inCorso+".":(fatte===0?"Nessuna serie ancora spuntata.":"")];
+  return L.filter(Boolean).join("\n");
+}
+/* contesto COMPATTO per i turni successivi della chat: la posizione e i numeri
+   chiave, senza rimandare ogni volta scheda intera e storico. Il contesto
+   completo viaggia solo col primo messaggio: i successivi costerebbero il
+   triplo per ripetere cose che il modello ha gia' nella conversazione. */
+function ctxCompact(dayId){
+  const r=currentRefs();
+  return [ctxPosition(dayId),
+    "RIFERIMENTI: squat "+r.squat+", panca "+r.bench+", rematore "+r.row+", lento "+r.ohp+", cerniera "+r.hinge+" kg (per ~8 rip).",
+    "OBIETTIVO: "+GOALTXT()+"."].join("\n");
+}
 
 /* fotografia sintetica della situazione: e' il contesto che accompagna
    ogni richiesta, cosi' l'AI non risponde nel vuoto */
@@ -4123,6 +4322,7 @@ function ctxForAI(dayId){
          ", "+((S.profile&&S.profile.peso)||"?")+" kg, esperienza "+
          ({p:"meno di 1 anno",i:"1-3 anni",a:"oltre 3 anni"}[(S.profile&&S.profile.level)]||"?")+".");
   L.push("OBIETTIVO: "+GOALTXT()+".");
+  L.push(ctxPosition(dayId));
   const r=currentRefs();
   L.push("RIFERIMENTI DI FORZA (carico per ~8 ripetizioni): squat "+r.squat+" kg, panca "+r.bench+
          " kg, rematore "+r.row+" kg, lento avanti "+r.ohp+" kg, cerniera "+r.hinge+" kg.");
@@ -4353,17 +4553,22 @@ function aiChatAsk(){
     log.insertAdjacentHTML("beforeend",`<div class="sub" id="ch_wait">sto pensando…</div>`);
     log.scrollTop=log.scrollHeight;
     const storia=S.chat.slice(-12).map(m=>(m.r==="u"?"ATLETA: ":"TU: ")+m.t).join("\n");
+    /* il contesto completo (scheda, storico, altri giorni) viaggia solo col
+       primo messaggio della conversazione; dopo basta posizione e numeri:
+       il resto e' gia' nella storia che il modello riceve comunque */
+    const primoTurno=S.chat.filter(m=>m.r==="u").length<=1;
+    const contesto=primoTurno?ctxForAI(view):ctxCompact(view);
     const P=["Sei il personal trainer di questo atleta: esperto di forza, ipertrofia e ricomposizione.",
       "Rispondi in italiano, diretto e tecnico, senza premesse di sicurezza e senza giri di parole.",
       "MASSIMO 120 parole. Vai al punto. Se i dati non bastano per rispondere, dillo e chiedi cosa ti serve.",
       "Se proponi una modifica concreta alla scheda, chiudi con un blocco applicabile:",
       "PATCH SCHEDA / GIORNO X / NomeEsercizio: carico N  (oppure serie N, ripetizioni X, pausa N)",
       "Una riga per modifica. Se non proponi modifiche, non scrivere il blocco.",
-      "","CONTESTO AGGIORNATO:",ctxForAI(view),
+      "","CONTESTO AGGIORNATO:",contesto,
       "","CONVERSAZIONE FINORA:",storia,
       "","Rispondi solo all'ultima domanda dell'atleta."].join("\n");
     try{
-      const t=await askGemini(P);
+      const t=await askAI(P);
       S.chat.push({r:"a",t:t.trim()});
       if(S.chat.length>CHAT_MAX)S.chat=S.chat.slice(-CHAT_MAX);
       save();
@@ -4610,6 +4815,7 @@ function ssCard(run,d){
         <button class="ssplus" data-k="${k}">+</button>
       </div>
     </div>
+    <input class="note ssnote" data-k="${k}" value="${esc(e.note)}" placeholder="nota su ${esc(e.n)}…">
     ${k<run.length-1?`<div class="ssarrow">↓ &nbsp;subito, senza pausa</div>`:""}`).join("");
 
   box.innerHTML=`
@@ -4678,6 +4884,7 @@ function ssCard(run,d){
   draw();
 
   box.querySelectorAll(".ssnm").forEach(el=>el.onclick=()=>openEx(run[+el.dataset.k]));
+  box.querySelectorAll(".ssnote").forEach(inp=>inp.onchange=()=>{run[+inp.dataset.k].note=inp.value;save()});
   const setW=(k,v)=>{
     const e=run[k];
     e.w=Math.max(0,Math.round(v*10)/10);e.man=1;
@@ -5034,7 +5241,7 @@ async function sessionClosing(entry,dayId){
       verdetti?("\nRILIEVI CALCOLATI DALL'APP (fidati di questi):\n"+verdetti):"",
       prec?("\nSTESSO GIORNO, VOLTE PRECEDENTI:\n"+prec):"",
       "","Testo semplice, niente elenchi puntati, niente titoli."].join("\n");
-    const t=await askGemini(P);
+    const t=await askAI(P);
     entry.closing=t.trim();save();
     sheet.innerHTML=`
       <h3>Chiusura della giornata</h3>
@@ -5072,7 +5279,7 @@ async function loadTipFor(dayId){
       "Scegli il PIÙ rilevante e scrivilo in UNA riga, massimo 22 parole, in italiano, diretto.",
       "Se nessuno merita di essere detto, rispondi con la sola parola: NIENTE.",
       "Non inventare nulla che non sia nell'elenco.","","SEGNALI:",sig.map(x=>"- "+x).join("\n")].join("\n");
-    let t=(await askGemini(P)).trim().replace(/^["'\u2022\-\s]+/,"");
+    let t=(await askAI(P)).trim().replace(/^["'\u2022\-\s]+/,"");
     if(/^niente/i.test(t))t="";
     store.set(key,t);return t;
   }catch(e){store.set(key,"");return ""}
@@ -5451,7 +5658,7 @@ function editWarmAsk(d){
           MOBLIB.map(m=>m[0]).join(" · "),
           "","OGGI ALLENA: "+(d.ex||[]).map(e=>e.n).join(", "),
           "DOMANDA: "+q].join("\n");
-        const t=await askGemini(P);
+        const t=await askAI(P);
         out.innerHTML=`<div class="cues" style="padding:11px;margin-top:8px;font-size:13px">${esc(t.trim())}</div>`;
       }catch(e){out.innerHTML=`<div class="nextbox late" style="margin-top:8px">${esc(e.message)}</div>`}
     };
@@ -5627,6 +5834,7 @@ async function bootAuth(){
       authScreen.classList.remove("show");
       safeStart();
       await pullAndMerge();
+      await pullAIKeys();
       render(); updateBarInfo();
       afterLoginFlow();
       return;
