@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+
+<!-- Content-Security-Policy.
+     Sul monolite non era applicabile: il JavaScript stava in un tag <script>
+     inline, quindi sarebbe servito 'unsafe-inline', che vanifica la protezione.
+     Ora il codice e' un bundle esterno, quindi 'self' basta e la regola morde
+     davvero: e' la seconda linea di difesa contro un XSS.
+     style-src tiene 'unsafe-inline' perche' i template scrivono style="..."
+     inline in molti punti; toglierlo richiede prima rimuoverli tutti. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://gnksbatouzwdneixvpmn.supabase.co https://generativelanguage.googleapis.com; manifest-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'">
+<meta name="referrer" content="no-referrer">
+
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0C0F14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Scheda">
+<title>Scheda A/B/C — Full Body</title>
+
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body data-day="A">
+
+<div id="authScreen">
+  <div class="authbox">
+    <div class="logo">Scheda <em>Full Body</em></div>
+    <div class="tag" id="authTag">Accedi per ritrovare i tuoi carichi su qualsiasi dispositivo.</div>
+    <div id="authMsg"></div>
+    <label for="authEmail">Email</label>
+    <input id="authEmail" type="email" autocomplete="email" inputmode="email" placeholder="tu@esempio.it">
+    <label for="authPw">Password</label>
+    <input id="authPw" type="password" autocomplete="current-password" placeholder="minimo 6 caratteri">
+    <button id="authBtn">Accedi</button>
+    <button id="authToggle">Non hai un account? <b>Registrati</b></button>
+    <button id="authOffline">Continua senza account (solo su questo dispositivo)</button>
+  </div>
+</div>
+
+<div id="syncDot">sync</div>
+<button class="fab" id="fab" title="Chiedi al preparatore">💬</button>
+
+
+<header>
+  <div class="wrap">
+    <div class="hd"><h1>Full <em>Body</em> <span style="font-size:11px;color:#4ADE80;font-family:'IBM Plex Mono',monospace;vertical-align:super" id="verTag">—</span></h1><button class="meta" id="who" style="background:none;border:0;cursor:pointer;font:inherit">A → B → C ▾</button></div>
+    <nav id="nav"></nav>
+  </div>
+</header>
+
+<main class="wrap" id="main"></main>
+
+<div class="bar" id="bar">
+  <div class="inner">
+    <div class="clock" id="clock">--:--<small>RECUPERO</small></div>
+    <div class="sclock" id="sclock" title="Tocca per avviare/azzerare">SEDUTA <b>00:00</b><br><span id="prog">0/0 serie</span></div>
+    <div class="btns">
+      <button class="b-sec" id="stop">Stop</button>
+      <button class="b-main" id="save">Registra seduta</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modal"><div class="sheet" id="sheet"></div></div>
+<div class="cmodal" id="cmodal"><div class="cbox"><p id="cmsg"></p><div class="cbtns"><button id="cno">Annulla</button><button id="cok">Conferma</button></div></div></div>
+
+<div class="onb" id="onb"><div class="in">
+  <h2>Costruiamo la <em>tua</em> scheda</h2>
+  <p class="lead">Rispondi a poche domande: l'app genera la scheda A/B/C con i carichi calibrati su di te. Potrai correggere tutto in ogni momento — e i carichi si ricalibrano da soli man mano che progredisci.</p>
+  <div class="lbl2">Chi sei</div>
+  <div class="grid2">
+    <input id="ob_nome" placeholder="Nome" autocomplete="given-name">
+    <input id="ob_cognome" placeholder="Cognome" autocomplete="family-name">
+  </div>
+  <div class="lbl2">Peso corporeo (kg)</div>
+  <input id="ob_peso" class="mono" inputmode="decimal" placeholder="es. 77">
+  <div class="lbl2">Da quanto ti alleni con i pesi</div>
+  <div class="lvl" id="ob_lvl">
+    <button data-l="p">Meno di 1 anno</button>
+    <button data-l="i" class="on">1–3 anni</button>
+    <button data-l="a">Oltre 3 anni</button>
+  </div>
+  <div class="lbl2">Carichi che conosci — kg per circa 8 ripetizioni (lascia vuoto se non lo sai)</div>
+  <div class="card" style="padding:6px 14px">
+    <div class="liftrow"><span class="ln">Squat con bilanciere<small>ginocchia e anche, base gambe</small></span><input class="mono" id="ob_squat" inputmode="decimal" placeholder="?"></div>
+    <div class="liftrow"><span class="ln">Panca piana<small>spinta orizzontale</small></span><input class="mono" id="ob_bench" inputmode="decimal" placeholder="?"></div>
+    <div class="liftrow"><span class="ln">Rematore con bilanciere<small>tirata orizzontale</small></span><input class="mono" id="ob_row" inputmode="decimal" placeholder="?"></div>
+    <div class="liftrow"><span class="ln">Lento avanti (military press)<small>spinta verticale</small></span><input class="mono" id="ob_ohp" inputmode="decimal" placeholder="?"></div>
+    <div class="liftrow"><span class="ln">Stacco rumeno (RDL)<small>cerniera d'anca</small></span><input class="mono" id="ob_hinge" inputmode="decimal" placeholder="?"></div>
+  </div>
+  <button class="genbtn" id="ob_go">Genera la mia scheda</button>
+  <button class="skipbtn" id="ob_skip">Salta, uso la scheda di esempio</button>
+</div></div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+.ex{background:var(--card);border:1px solid var(--line);border-radius:var(--r);margin-bottom:10px;
+    box-shadow:0 4px 16px rgba(0,0,0,.25)}
+  .ex>details{margin:0}
+  .ex>details>summary{cursor:pointer;list-style:none;padding:10px;user-select:none;-webkit-user-select:none;display:flex;align-items:center}
+  .ex>details>summary::-webkit-details-marker{display:none}
+  .ex>details>summary::before{content:'▶';display:inline-block;font-size:18px;margin-right:10px;color:var(--acc);transition:transform .25s ease;flex-shrink:0}
+  .ex>details[open]>summary::before{transform:rotate(90deg)}
+  .ex>details>:not(summary){padding:0 10px 10px 10px}
+  /* Superserie */
+  .ssgroup details>summary{cursor:pointer;list-style:none;padding:10px;user-select:none;-webkit-user-select:none;display:flex;align-items:center}
+  .ssgroup details>summary::before{content:'▶';display:inline-block;font-size:16px;margin-right:8px;color:var(--acc);transition:transform .25s ease;flex-shrink:0}
+  .ssgroup details[open]>summary::before{transform:rotate(90deg)}
+  nav .navgear{flex:0 0 46px;display:flex;align-items:center;justify-content:center;padding:9px 0}
+  nav .navgear svg{display:block}
+
+  /* iOS ingrandisce la pagina se un campo ha font < 16px: teniamo 16px reali
+     e riduciamo otticamente dove serve, così non scatta lo zoom al focus */
+  input,textarea,select,button{font-size:16px}
+  .set input{font-size:16px!important}
+  .set .srir{font-size:16px!important;color:var(--soft)}
+  .restrow input{font-size:16px!important}
+  .urlin,textarea.urlin{font-size:16px!important}
+  .cfgrow input,.cfgrow .txt{font-size:16px!important}
+  .stamp .val input{font-size:26px!important}
+
+  /* --- rifiniture UX --- */
