@@ -15,7 +15,7 @@ const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="26.0";
+const APP_VERSION="26.1";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
@@ -3480,6 +3480,50 @@ function extractPatch(txt){
   return m?m[0].replace(/```/g,"").trim():"";
 }
 
+
+/* ============ CONSULTO FRA PIU' MOTORI ============
+   I modelli non possono parlarsi davvero: quello che si puo' fare, e che qui
+   si fa, e' interrogarli in parallelo sulla stessa domanda e poi passare a uno
+   di loro tutte le risposte perche' le confronti e ne ricavi una sola.
+   Il secondo giro riceve SOLO i pareri e un riassunto breve, non di nuovo
+   tutti i dati: ripeterli triplicherebbe il consumo senza aggiungere nulla. */
+async function askPanel(prompt,ctxBreve,onStato){
+  const motori=aiConfigured();
+  if(motori.length<2)throw new Error("Serve almeno un secondo motore configurato.");
+  onStato&&onStato(`Interrogo ${motori.length} motori in parallelo…`);
+  const esiti=await Promise.allSettled(motori.map(p=>callProvider(p,prompt)));
+  const pareri=[];
+  const falliti=[];
+  esiti.forEach((e,i)=>{
+    if(e.status==="fulfilled"&&String(e.value||"").trim())pareri.push({nome:motori[i].nome,txt:String(e.value).trim()});
+    else falliti.push({nome:motori[i].nome,perche:(e.reason&&e.reason.message)||"nessuna risposta"});
+  });
+  if(!pareri.length)throw new Error("Nessun motore ha risposto. "+falliti.map(f=>f.nome+": "+f.perche).join(" · "));
+  if(pareri.length===1)return {pareri,falliti,sintesi:pareri[0].txt,arbitro:pareri[0].nome,solo:true};
+
+  onStato&&onStato(`${pareri.length} pareri raccolti. Li metto a confronto…`);
+  /* arbitro: il motore preferito se configurato, altrimenti il primo della fila */
+  const pref=aiProvider();
+  const arb=(pref!=="auto"&&AIP(pref)&&aiKey(pref))?AIP(pref):motori[0];
+  const P=["Sei il preparatore capo. Hai chiesto un parere a "+pareri.length+" colleghi sullo stesso atleta.",
+    "Il tuo compito NON e' riassumerli: e' decidere. Confrontali e produci UNA sola risposta operativa.",
+    "",
+    "Regole:",
+    "- Dove concordano, tieni la loro conclusione e dallo per assodato senza dilungarti.",
+    "- Dove si contraddicono, scegli tu e spiega in una riga perche' scarti l'altra ipotesi.",
+    "- Se uno propone qualcosa che gli altri non hanno visto ed e' fondato, tienilo.",
+    "- Scarta senza pieta' quello che non e' sostenuto dai dati.",
+    "- Italiano, asciutto, niente premesse. Non nominare i colleghi.",
+    "- Se servono modifiche alla scheda, chiudi con UN SOLO blocco PATCH SCHEDA nel formato che conosci.",
+    "",
+    "SITUAZIONE:", ctxBreve||"",
+    "",
+    "I PARERI:",
+    pareri.map((p,i)=>"--- Parere "+(i+1)+" ---\n"+p.txt).join("\n\n")].join("\n");
+  const sintesi=await callProvider(arb,P);
+  return {pareri,falliti,sintesi:String(sintesi).trim(),arbitro:arb.nome,solo:false};
+}
+
 function aiAnalysisAsk(){
   const sheet=document.getElementById("sheet");
   let kind=store.get("exp_period")||"all";
@@ -3503,6 +3547,8 @@ function aiAnalysisAsk(){
       ${gemKey()?`<div class="lbl2">Modello Google</div>
       <div class="chips" id="amod">${GEM_MODELS.map(([k,l])=>`<button class="chip${gemModel()===k?" on":""}" data-m="${k}">${l}</button>`).join("")}</div>`:""}
       <button class="genbtn" id="ago" style="margin-top:14px">Analizza le mie sedute</button>
+      ${aiConfigured().length>=2?`<button class="revert" id="apanel" style="margin-top:8px">Consulto fra ${aiConfigured().length} motori — piu' lento, piu' solido</button>
+        <div class="sub" style="font-size:12px;margin-top:5px">La stessa domanda va a tutti i motori configurati; poi uno di loro mette a confronto le risposte e ne ricava una sola. Usa una richiesta per motore, piu' una per il confronto.</div>`:""}
       <div id="aout"></div>
       <button class="closebtn" id="aclose" style="margin-top:8px">Chiudi</button>`;
     sheet.querySelectorAll("#aper .chip").forEach(b=>b.onclick=()=>{kind=b.dataset.k;store.set("exp_period",kind);draw()});
@@ -3510,6 +3556,39 @@ function aiAnalysisAsk(){
     sheet.querySelectorAll(".aimode").forEach(b=>b.onclick=()=>{store.set("ai_mode",b.dataset.v);draw()});
     sheet.querySelector("#a_setup").onclick=gemSetupAsk;
     sheet.querySelector("#aclose").onclick=closeModal;
+    const ap=sheet.querySelector("#apanel");
+    if(ap)ap.onclick=async()=>{
+      if(!sessionsIn(kind).length){toast("Nessuna seduta nel periodo");return}
+      const out=sheet.querySelector("#aout");
+      ap.disabled=true;
+      const stato=t=>{out.innerHTML=`<div class="sub" style="margin-top:12px">${esc(t)}</div>`};
+      try{
+        const r=await askPanel(buildPromptMd(kind,aiMode()),ctxCompact(view),stato);
+        const patch=extractPatch(r.sintesi);
+        out.innerHTML=`
+          <div class="lbl2" style="margin-top:16px">Conclusione · sintesi di ${r.pareri.length} pareri, a cura di ${esc(r.arbitro)}</div>
+          <div class="cues" style="white-space:pre-wrap;padding:12px;font-size:14px;line-height:1.5">${esc(r.sintesi)}</div>
+          ${patch?`<button class="genbtn" id="apply" style="margin-top:10px">Applica le modifiche proposte</button>`:
+                  `<div class="sub" style="margin-top:8px">Nessun blocco di modifiche: non c'e' nulla da applicare.</div>`}
+          <details style="margin-top:10px">
+            <summary style="cursor:pointer;color:var(--acc);font-size:13px">Leggi i singoli pareri (${r.pareri.length})</summary>
+            ${r.pareri.map(p=>`<div class="card" style="padding:11px 13px;margin-top:8px">
+              <div class="lbl2" style="margin:0 0 6px">${esc(p.nome)}</div>
+              <div style="white-space:pre-wrap;font-size:13px;line-height:1.45;color:var(--soft)">${esc(p.txt)}</div>
+            </div>`).join("")}
+          </details>
+          ${r.falliti.length?`<div class="sub" style="margin-top:8px;font-size:12px;color:var(--soft)">Non hanno risposto: ${r.falliti.map(f=>esc(f.nome)).join(", ")}.</div>`:""}`;
+        store.set("last_ai",String(Date.now()));
+        const apb=out.querySelector("#apply");
+        if(apb)apb.onclick=()=>{
+          const pt=parsePatch(patch), plan=resolvePatch(pt);
+          if(!plan.length&&!pt.refs.length){toast("Nessuna modifica riconosciuta");return}
+          previewPatch(plan,pt);
+        };
+      }catch(e){
+        out.innerHTML=`<div class="nextbox late" style="margin-top:12px">${esc(e.message||"Errore")}</div>`;
+      }finally{ap.disabled=false}
+    };
     sheet.querySelector("#ago").onclick=async()=>{
       if(!anyAIKey()){gemSetupAsk();return}
       if(!sessionsIn(kind).length){toast("Nessuna seduta nel periodo");return}
