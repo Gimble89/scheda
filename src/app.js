@@ -1,10 +1,21 @@
+/* =============================================================================
+   Scheda Full Body — nucleo applicativo
+   I moduli dati (figure, cue, libreria, scheda di default) vivono in src/data:
+   senza questi import l'app parte solo se trova dati salvati, e si presenta
+   con le card di emergenza senza figure. Non rimuoverli.
+   ============================================================================= */
+import { RAW, fig } from "./data/figures.js";
+import { CUE } from "./data/cues.js";
+import { LIB, LIBN, GRPS, defaultsFor } from "./data/library.js";
+import { mk, D } from "./data/default-plan.js";
+
 
 /* ---------------- storage ---------------- */
 const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="24.6";
+const APP_VERSION="25.1";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
