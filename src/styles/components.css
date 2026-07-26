@@ -159,6 +159,29 @@
   .mmap .gdist.quasi{stroke:#D9B44A}
   .mmap .gdist.fresco{stroke:var(--hot);opacity:.7}
 
+  /* stato di recupero sui chip del Random: quando un chip e' anche selezionato
+     (.on, sfondo pieno color accento) il testo colorato di rosso/giallo
+     diventava illeggibile. Selezionato vince: testo scuro leggibile, e lo
+     stato "allenato da poco" resta indicato dall'anello esterno colorato. */
+  .chip.gdist.quasi{border-color:#D9B44A;color:#FFD166}
+  .chip.gdist.fresco{border-color:var(--hot);color:var(--hot);opacity:.85}
+  .chip.gdist.on{color:#0C0F14;opacity:1}
+  .chip.gdist.on.fresco{box-shadow:0 0 0 2px var(--hot)}
+  .chip.gdist.on.quasi{box-shadow:0 0 0 2px #D9B44A}
+
+  /* impostazioni a sezioni richiudibili: la pagina mostra solo i titoli,
+     ogni sezione si apre al tocco. Meno muro di voci, stesse funzioni. */
+  details.sett>summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:10px;
+    user-select:none;-webkit-user-select:none;padding:2px 0;min-height:30px}
+  details.sett>summary::-webkit-details-marker{display:none}
+  details.sett>summary::before{content:'▶';font-size:13px;color:var(--acc);flex-shrink:0;
+    transition:transform .2s ease;align-self:center}
+  details.sett[open]>summary::before{transform:rotate(90deg)}
+  details.sett>summary h4{margin:0}
+  details.sett>summary small{margin-left:auto;color:var(--soft);font-size:11px;text-align:right;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:50%}
+  details.sett[open]>summary{margin-bottom:6px}
+
   /* chat del Coach AI: bolle allineate come in una normale app di messaggistica */
   .cchmsgs{display:flex;flex-direction:column;gap:10px;max-height:54vh;overflow-y:auto;padding-bottom:2px}
   .cchmsg{max-width:88%;border-radius:14px;padding:9px 12px;font-size:14px;line-height:1.4;white-space:pre-wrap;overflow-wrap:anywhere}
