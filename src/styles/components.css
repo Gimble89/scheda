@@ -144,6 +144,31 @@
   .tools button{flex:1;min-width:120px;background:transparent;border:1px solid var(--line);border-radius:var(--r);padding:11px;font-family:inherit;font-size:13px;color:var(--soft);cursor:pointer}
   .tools button.danger:active{border-color:var(--hot);color:var(--hot)}
 
+  /* mappa muscolare del tab Random: figura schematica, non anatomica, negli
+     stessi toni delle icone esercizio esistenti. Le zone condividono classe e
+     data-d coi chip testuali sottostanti, cosi' un solo handler li aggiorna entrambi. */
+  .mmap{display:flex;justify-content:center;margin:2px 0 14px}
+  .mmap svg{width:132px;height:auto;filter:drop-shadow(0 6px 14px rgba(0,0,0,.35))}
+  .mmap .mdecor{fill:rgba(255,255,255,.06);stroke:rgba(255,255,255,.22);stroke-width:1.5}
+  .mmap .gdist{fill:rgba(255,255,255,.08);stroke:rgba(255,255,255,.5);stroke-width:2;cursor:pointer;
+    transition:fill .15s ease,stroke .15s ease,opacity .15s ease}
+  .mmap .gdist:active{fill:rgba(255,255,255,.2)}
+  .mmap .gdist.on{fill:var(--accSoft);stroke:var(--acc)}
+  .mmap .gdist.quasi{stroke:#D9B44A}
+  .mmap .gdist.fresco{stroke:var(--hot);opacity:.7}
+
+  /* chat del Coach AI: bolle allineate come in una normale app di messaggistica */
+  .cchmsgs{display:flex;flex-direction:column;gap:10px;max-height:54vh;overflow-y:auto;padding-bottom:2px}
+  .cchmsg{max-width:88%;border-radius:14px;padding:9px 12px;font-size:14px;line-height:1.4;white-space:pre-wrap;overflow-wrap:anywhere}
+  .cchmsg.u{align-self:flex-end;background:var(--acc);color:#0C0F14}
+  .cchmsg.a{align-self:flex-start;background:var(--card2);color:var(--text);border:1px solid var(--line)}
+  .cchmsg .who{margin-top:5px;font-size:10px;opacity:.65;font-family:'IBM Plex Mono',monospace}
+  .cchtyping{align-self:flex-start;color:var(--soft);font-size:13px;font-style:italic}
+  .cchrow{display:flex;gap:8px;margin-top:10px}
+  .cchrow input{flex:1;border:1px solid var(--line);border-radius:10px;background:var(--card2);padding:10px 12px;color:var(--text);font-family:inherit}
+  .cchrow input:focus{outline:0;border-color:var(--acc)}
+  .cchrow button{flex:none;padding:0 16px}
+
   .bar{position:fixed;left:0;right:0;bottom:0;background:rgba(12,15,20,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
     border-top:1px solid var(--line);padding:9px 14px calc(9px + env(safe-area-inset-bottom));z-index:5}
   .bar .inner{max-width:720px;margin:0 auto;display:flex;gap:10px;align-items:center}

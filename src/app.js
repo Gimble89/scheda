@@ -15,7 +15,7 @@ const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="26.2";
+const APP_VERSION="26.3";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
@@ -176,6 +176,7 @@ function normState(st){
   if(st.profile===undefined)st.profile=null;
   if(st.rnd===undefined)st.rnd=null;
   if(!st.saved)st.saved=[];
+  if(!st.coach)st.coach={mode:null,msgs:[],plan:null};
   return migrate(st);
 }
 /* Profilo vuoto per un account nuovo: struttura dei 3 giorni e mobilita',
@@ -468,7 +469,7 @@ function buildNav(){
     b.onclick=()=>{view=d.id;store.set("scheda_view",view);render()};
     nav.appendChild(b);
   });
-  [["RANDOM","al volo"],["CORPO","misure"],["LOG","storico"]].forEach(([id,sub])=>{
+  [["RANDOM","al volo"],["COACH","allenatore AI"],["CORPO","misure"],["LOG","storico"]].forEach(([id,sub])=>{
     const h=document.createElement("button");
     h.setAttribute("aria-selected",view===id);
     h.innerHTML=`${id}<span class="sub">${sub}</span>`;
@@ -697,11 +698,12 @@ function drawExList(container,d){
 function render(){
   document.body.dataset.day=view;
   buildNav();
-  document.getElementById("save").style.display=(view==="LOG"||view==="CORPO"||view==="RANDOM"||view==="SET")?"none":"block";
+  document.getElementById("save").style.display=(view==="LOG"||view==="CORPO"||view==="RANDOM"||view==="COACH"||view==="SET")?"none":"block";
   main.innerHTML="";
   if(view==="LOG")return renderLog();
   if(view==="CORPO")return renderBody();
   if(view==="RANDOM")return renderRandom();
+  if(view==="COACH")return renderCoach();
   if(view==="SET")return renderSettings();
   const d=S.days.find(x=>x.id===view);
   if(!d){view="A";return render()}
@@ -1332,10 +1334,34 @@ function renderSettings(){
 const DIST2GRP={petto:"Petto",schiena:"Schiena",spalle:"Spalle",braccia:"Braccia",bicipiti:"Braccia",
                 tricipiti:"Braccia",gambe:"Gambe",core:"Core",addome:"Core",quad:"Gambe",
                 quadricipiti:"Gambe",femorali:"Gambe",glutei:"Gambe",polpacci:"Gambe",dorso:"Schiena"};
+/* Figura del corpo, schematica non anatomica (stesso stile a linee delle
+   icone esercizio in data/figures.js): ogni zona porta un data-d che combacia
+   con le chiavi di genCfg.dist, cosi' la stessa logica di toggle/ricarico che
+   gia' colora i chip colora anche il disegno. "Schiena" appare come i due
+   dorsali che sporgono ai lati del busto, l'unico modo di renderla leggibile
+   in una figura di sola fronte. */
+function muscleMapSVG(){
+  const z=(d,shape)=>`<${shape[0]} class="gdist${genCfg.dist[d]?" on":""}" data-d="${d}" ${shape[1]}/>`;
+  return `<svg viewBox="0 0 140 224" aria-hidden="true">
+    <circle class="mdecor" cx="70" cy="18" r="13"/>
+    <rect class="mdecor" x="64" y="29" width="12" height="13" rx="4"/>
+    ${z("spalle",["circle",'cx="34" cy="46" r="12"'])}
+    ${z("spalle",["circle",'cx="106" cy="46" r="12"'])}
+    ${z("schiena",["rect",'x="26" y="48" width="14" height="36" rx="7"'])}
+    ${z("schiena",["rect",'x="100" y="48" width="14" height="36" rx="7"'])}
+    ${z("petto",["rect",'x="44" y="44" width="52" height="28" rx="12"'])}
+    ${z("braccia",["rect",'x="8" y="52" width="16" height="68" rx="8"'])}
+    ${z("braccia",["rect",'x="116" y="52" width="16" height="68" rx="8"'])}
+    ${z("core",["rect",'x="52" y="72" width="36" height="32" rx="10"'])}
+    <rect class="mdecor" x="46" y="102" width="48" height="12" rx="6"/>
+    ${z("gambe",["rect",'x="50" y="112" width="16" height="100" rx="8"'])}
+    ${z("gambe",["rect",'x="74" y="112" width="16" height="100" rx="8"'])}
+  </svg>`;
+}
 function paintRandomWarn(){
   const box=document.getElementById("rwarn"); if(!box)return;
-  // colora i chip secondo lo stato di recupero
-  document.querySelectorAll("#rdist .gdist").forEach(b=>{
+  // colora chip e figura secondo lo stato di recupero (stessa sorgente dati per entrambi)
+  document.querySelectorAll("#rdistwrap [data-d]").forEach(b=>{
     const g=DIST2GRP[String(b.dataset.d).toLowerCase()]||"";
     const st=g?grpState(g):"pronto";
     b.classList.toggle("fresco",st==="fresco");
@@ -1382,7 +1408,10 @@ function renderRandom(){
     <h4>Cosa alleni oggi</h4>
     ${(()=>{try{return randomAdvice(genCfg.min)}catch(x){return""}})()}
     <div class="lbl2">Distretti</div>
-    <div class="chips" id="rdist">${dsel}</div>
+    <div id="rdistwrap">
+      <div class="mmap" id="rmap">${muscleMapSVG()}</div>
+      <div class="chips" id="rdist">${dsel}</div>
+    </div>
     <div id="rwarn"></div>
     <div class="lbl2">Esercizi per distretto</div>
     <div class="chips" id="rpd">${[1,2,3,4].map(v=>`<button class="chip${genCfg.perDist===v?" on":""}" data-v="${v}">${v}</button>`).join("")}</div>
@@ -1405,8 +1434,11 @@ function renderRandom(){
     genCfg.band=b.dataset.b==="1";
     cfgCard.querySelectorAll("#rband .chip").forEach(x=>x.classList.remove("on"));b.classList.add("on");
   });
-  cfgCard.querySelectorAll("#rdist .chip").forEach(b=>b.onclick=()=>{
-    const d=b.dataset.d;genCfg.dist[d]=genCfg.dist[d]?0:1;b.classList.toggle("on");
+  // chip testuali e zone della figura condividono data-d: un tocco su una
+  // qualunque delle due rappresentazioni aggiorna entrambe insieme.
+  cfgCard.querySelectorAll("#rdistwrap [data-d]").forEach(b=>b.onclick=()=>{
+    const d=b.dataset.d;genCfg.dist[d]=genCfg.dist[d]?0:1;
+    cfgCard.querySelectorAll(`#rdistwrap [data-d="${d}"]`).forEach(x=>x.classList.toggle("on",!!genCfg.dist[d]));
     try{paintRandomWarn()}catch(e){}
   });
   setTimeout(()=>{try{paintRandomWarn()}catch(e){}},0);
@@ -1503,6 +1535,207 @@ function renderSavedList(){
     };
     list.appendChild(row);
   });
+}
+
+/* ==================== TAB COACH: allenatore AI a personaggio ====================
+   Conversazione guidata, una domanda alla volta, in un personaggio esperto
+   scelto tra 4 tagli di allenamento. Quando ha raccolto abbastanza per
+   proporre una scheda, il modello chiude con un blocco delimitato ```SCHEDA_COACH
+   che qui viene estratto, validato con validateDays() (lo stesso filtro usato
+   per l'import da foto/backup: mai fidarsi ciecamente di un JSON generato) e
+   proposto in anteprima. Se confermata finisce nell'archivio schede (S.saved,
+   kind:"ciclo") esattamente come una scheda generata a mano: da quel momento
+   e' utilizzabile anche offline, solo la conversazione richiede la rete. */
+const COACH_MODES=[
+  ["funzionale","Funzionale","Movimento naturale, mobilità, controllo del corpo. Meno isolamento, più pattern.",
+   "Sei un coach di allenamento funzionale con anni di palestra e outdoor alle spalle. Pensi per pattern di movimento (spingere, tirare, squattare, hinge, ruotare, spostarsi) più che per singolo muscolo. Dai valore a mobilità, controllo del corpo e trasferibilità alla vita reale, non solo all'estetica. Parli in modo diretto e pratico."],
+  ["sportivo","Sportivo","Prepari un atleta per una disciplina specifica: potenza, agilità, transfer sul campo.",
+   "Sei un preparatore atletico che ha lavorato con sportivi di discipline diverse. Il tuo primo pensiero e' sempre 'a cosa deve servire questo lavoro sul campo o in gara'. Bilanci forza, potenza, velocita' e prevenzione infortuni in base allo sport specifico. Chiedi sempre sport, ruolo/specialita' e periodo di stagione prima di proporre qualunque cosa."],
+  ["forza","Forza","Massimali, progressione sui grandi fondamentali, periodizzazione.",
+   "Sei un coach di forza, scuola powerlifting/strength training. Ti interessano i grandi fondamentali (squat, panca, stacco e loro varianti) e la progressione nel tempo: percentuali, RIR, periodizzazione. Non hai paura di dire a un atleta che sta facendo volume inutile o troppo poco per progredire davvero."],
+  ["elasticita","Elasticità","Mobilità, ampiezza di movimento, prevenzione infortuni.",
+   "Sei un esperto di mobilita', flessibilita' e controllo del movimento. Il tuo obiettivo e' aumentare l'ampiezza di movimento realmente utilizzabile e ridurre il rischio di infortuni, non solo 'allungare i muscoli'. Distingui sempre tra mobilita' attiva e stretching passivo e spieghi perche' scegli l'una o l'altra."]
+];
+let coachBusy=false;
+
+function renderCoach(){
+  main.insertAdjacentHTML("beforeend",`<div class="dayhead"><div class="eyebrow">Allenatore virtuale · ti conosce solo per quello che gli racconti</div><h2>Coach</h2></div>`);
+  if(!anyAIKey()){
+    main.insertAdjacentHTML("beforeend",`<div class="empty">Il coach ragiona con l'AI: serve almeno un motore configurato.</div>
+      <button class="genbtn" id="cch_setup" style="margin-top:10px">Configura AI</button>`);
+    document.getElementById("cch_setup").onclick=gemSetupAsk;
+    return;
+  }
+  if(!S.coach)S.coach={mode:null,msgs:[],plan:null};
+  if(!S.coach.mode){drawCoachModePicker();return}
+  drawCoachChat();
+}
+
+function drawCoachModePicker(){
+  const card=document.createElement("div");card.className="card";
+  card.innerHTML=`<h4>Che taglio vuoi dare all'allenamento?</h4>
+    <div class="sub" style="margin-bottom:10px">Scegli un ambito: il coach entra nel personaggio e ti fa le domande giuste per quello specifico obiettivo, poi ti propone una scheda.</div>
+    ${COACH_MODES.map(m=>`<button class="alt cch_mode" data-m="${m[0]}" style="width:100%;flex-direction:column;align-items:flex-start;gap:3px;margin-bottom:7px">
+      <span class="an">${esc(m[1])}</span><small style="color:var(--soft);font-family:inherit">${esc(m[2])}</small></button>`).join("")}`;
+  main.appendChild(card);
+  card.querySelectorAll(".cch_mode").forEach(b=>b.onclick=()=>startCoachMode(b.dataset.m));
+}
+
+async function startCoachMode(modeId){
+  S.coach={mode:modeId,msgs:[],plan:null};save();
+  await coachTurn(null);
+}
+
+function coachModeInfo(){return COACH_MODES.find(m=>m[0]===(S.coach&&S.coach.mode))||COACH_MODES[0]}
+
+function drawCoachChat(){
+  const info=coachModeInfo();
+  const head=document.createElement("div");head.className="card";
+  head.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+    <div><h4 style="margin-bottom:2px">${esc(info[1])}</h4><div class="sub" style="margin:0">${esc(info[2])}</div></div>
+    <button class="revert" id="cch_change" style="flex:none;padding:8px 12px">Cambia</button></div>`;
+  main.appendChild(head);
+  head.querySelector("#cch_change").onclick=async()=>{
+    if(coachBusy)return;
+    if((S.coach.msgs||[]).length && !await ask("Cambio modalità?<br><small style='color:var(--soft)'>La conversazione attuale si perde. Una scheda gia' salvata resta nell'archivio.</small>","Cambia"))return;
+    S.coach={mode:null,msgs:[],plan:null};save();render();
+  };
+
+  const box=document.createElement("div");box.className="card";
+  box.innerHTML=`<div class="cchmsgs" id="cch_msgs"></div>
+    <div id="cch_planbox"></div>
+    <div class="cchrow"><input id="cch_in" placeholder="Scrivi al coach…" ${coachBusy?"disabled":""}>
+      <button class="genbtn" id="cch_send" ${coachBusy?"disabled":""}>Invia</button></div>`;
+  main.appendChild(box);
+
+  const msgsBox=box.querySelector("#cch_msgs");
+  (S.coach.msgs||[]).forEach(m=>msgsBox.insertAdjacentHTML("beforeend",coachBubble(m)));
+  if(coachBusy)msgsBox.insertAdjacentHTML("beforeend",`<div class="cchtyping">Il coach sta scrivendo…</div>`);
+  msgsBox.scrollTop=msgsBox.scrollHeight;
+
+  if(S.coach.plan)drawCoachPlanBox(box.querySelector("#cch_planbox"),S.coach.plan);
+
+  const send=()=>{
+    if(coachBusy)return;
+    const inp=box.querySelector("#cch_in");
+    const t=(inp.value||"").trim();if(!t)return;
+    inp.value="";
+    coachTurn(t);
+  };
+  box.querySelector("#cch_send").onclick=send;
+  box.querySelector("#cch_in").onkeydown=e=>{if(e.key==="Enter")send()};
+}
+
+function coachBubble(m){
+  const mine=m.r==="u";
+  return `<div class="cchmsg ${mine?"u":"a"}">${esc(m.t)}${(!mine&&m.p)?`<div class="who">${esc(m.p)}</div>`:""}</div>`;
+}
+
+/* contesto sintetico per il coach: profilo, obiettivo, riferimenti di forza,
+   scheda in uso e ultime sedute. Niente focus su un singolo giorno (a
+   differenza di ctxForAI, pensato per la chat durante l'allenamento): qui
+   serve il quadro d'insieme, non la posizione nella seduta. */
+function coachCtx(){
+  const L=[];
+  L.push("PROFILO ATLETA: "+((S.profile&&S.profile.nome)||"atleta")+", "+((S.profile&&S.profile.peso)||"?")+
+    " kg, esperienza "+({p:"meno di 1 anno",i:"1-3 anni",a:"oltre 3 anni"}[(S.profile&&S.profile.level)]||"?")+".");
+  L.push("OBIETTIVO DICHIARATO NELL'APP: "+GOALTXT()+".");
+  try{
+    const r=currentRefs();
+    L.push("RIFERIMENTI DI FORZA (~8 rip): squat "+r.squat+" kg, panca "+r.bench+" kg, rematore "+r.row+
+      " kg, lento avanti "+r.ohp+" kg, cerniera "+r.hinge+" kg.");
+  }catch(e){}
+  if(S.days&&S.days.length)L.push("SCHEDA GIA' IN USO NELL'APP: "+S.days.map(d=>"giorno "+d.id+" ("+(d.focus||"")+")").join(", ")+".");
+  const ult=(S.log||[]).slice(-3).map(s=>s.date+" giorno "+s.d+" — "+(s.ex||[]).map(e=>e.n).join(", ")).join("\n");
+  if(ult)L.push("ULTIME SEDUTE REGISTRATE:\n"+ult);
+  return L.join("\n");
+}
+
+function buildCoachPrompt(userText){
+  const info=coachModeInfo();
+  const storia=(S.coach.msgs||[]).slice(-16).map(m=>(m.r==="u"?"ATLETA: ":"COACH: ")+m.t).join("\n");
+  return [
+    info[3],
+    "",
+    "Contesto sull'atleta che stai allenando (tienilo sempre presente, non ripartire mai da zero):",
+    coachCtx(),
+    "",
+    "Regole di comportamento:",
+    "- Fai UNA domanda alla volta, non un questionario intero: aspetta la risposta prima di proseguire.",
+    "- Sii sincero: se una richiesta non e' realistica per il livello, il tempo o l'attrezzatura dell'atleta, diglielo chiaramente, poi proponi un'alternativa credibile.",
+    "- Motiva senza essere finto o generico: parla come un allenatore vero, non come un depliant pubblicitario.",
+    "- Quando hai raccolto obiettivo, giorni disponibili a settimana, tempo per sessione, attrezzatura ed eventuali limitazioni fisiche, proponi la scheda.",
+    "- Se e solo se e' il momento di proporre la scheda completa, chiudi la risposta con ESATTAMENTE un blocco cosi' (sostituendo i valori, IC solo tra: squat, hinge, hpress, vpress, hpull, vpull, curl, tri, lat, calf, core, lunge, legpress, face):",
+    "```SCHEDA_COACH",
+    '{"days":[{"id":"A","focus":"descrizione breve","ex":[{"n":"Nome esercizio","ic":"squat","w":0,"inc":2.5,"rest":90,"r":"8-10","sets":3,"note":""}]}]}',
+    "```",
+    "Non mettere quel blocco finche' non sei davvero pronto a proporre la scheda completa: nella maggior parte dei turni normali non va messo.",
+    "",
+    "Conversazione finora:",
+    storia||"(inizio conversazione: presentati in due righe restando nel personaggio, poi fai la prima domanda)",
+    userText?("Nuovo messaggio dell'atleta: "+userText):""
+  ].filter(Boolean).join("\n");
+}
+
+/* estrae il blocco ```SCHEDA_COACH dalla risposta: quello che resta fuori e'
+   il messaggio da mostrare in chat. Nessuna fiducia cieca nel JSON del
+   modello: il chiamante lo fa comunque passare da validateDays(). */
+function extractCoachPlan(raw){
+  const m=raw.match(/```SCHEDA_COACH\s*([\s\S]*?)```/i);
+  if(!m)return{reply:raw.trim(),plan:null};
+  const reply=(raw.slice(0,m.index)+raw.slice(m.index+m[0].length)).trim()||"Ecco la scheda che propongo:";
+  let plan=null;
+  try{const j=JSON.parse(m[1].trim());plan=Array.isArray(j.days)?j.days:null}catch(e){plan=null}
+  return{reply,plan};
+}
+
+async function coachTurn(userText){
+  if(coachBusy)return;
+  coachBusy=true;
+  if(userText){S.coach.msgs.push({r:"u",t:userText});save()}
+  render();
+  try{
+    const raw=await askAI(buildCoachPrompt(userText));
+    const{reply,plan}=extractCoachPlan(raw);
+    S.coach.msgs.push({r:"a",t:reply,p:LAST_AI});
+    if(plan){
+      const chk=validateDays(plan);
+      if(chk.ok)S.coach.plan=chk.days;
+      else S.coach.msgs.push({r:"a",t:"(la scheda proposta non era valida: "+chk.err+" — chiedimi pure di riprovare)",p:LAST_AI});
+    }
+    save();
+  }catch(e){
+    S.coach.msgs.push({r:"a",t:"Non sono riuscito a risponderti: "+(e.message||"errore")+". Riprova.",p:null});
+    save();
+  }finally{
+    coachBusy=false;
+    render();
+  }
+}
+
+function drawCoachPlanBox(el,days){
+  const stats=cycleStats(days);
+  el.innerHTML=`<div class="nextbox" style="margin-top:10px">
+    <b>Proposta pronta</b> — ${stats.giorni} giorni, ${stats.esercizi} esercizi, ${stats.serie} serie.
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="genbtn" id="cch_save" style="flex:1">Salva nell'archivio</button>
+      <button class="revert" id="cch_discard" style="flex:none">Scarta</button>
+    </div></div>`;
+  el.querySelector("#cch_save").onclick=()=>saveCoachPlan(days);
+  el.querySelector("#cch_discard").onclick=()=>{S.coach.plan=null;save();render()};
+}
+
+function saveCoachPlan(days){
+  const info=coachModeInfo();
+  const name="Coach · "+info[1]+" — "+new Date().toLocaleDateString("it-IT",{day:"2-digit",month:"short",year:"2-digit"});
+  const c={id:"c"+Date.now().toString(36),kind:"ciclo",ts:Date.now(),name:name,
+    goal:(S.profile&&S.profile.goal)||"",stats:cycleStats(days),days:days};
+  if(!S.saved)S.saved=[];
+  S.saved.push(c);
+  S.coach.plan=null;
+  S.coach.msgs.push({r:"a",t:"Fatto — l'ho salvata nell'archivio come \""+name+"\". La trovi in Impostazioni → Le mie schede, la metti in servizio quando vuoi: da li' in poi funziona anche senza internet.",p:null});
+  save();render();
+  toast("Scheda salvata nell'archivio");
 }
 
 /* ---------------- log ---------------- */
@@ -2328,7 +2561,7 @@ Restituisci SOLO il JSON, nulla altro.`;
   try{
     const response=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",{
       method:"POST",
-      headers:{"Content-Type":"application/json","x-goog-api-key":anyAIKey()},
+      headers:{"Content-Type":"application/json","x-goog-api-key":gemKey()},
       body:JSON.stringify({
         contents:[{
           parts:[
