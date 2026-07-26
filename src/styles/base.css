@@ -11,6 +11,7 @@
   body[data-day="SET"]{--acc:#9AA7B8;--accSoft:rgba(154,167,184,.13);--accLine:rgba(154,167,184,.45)}
   body[data-day="LOG"]{--acc:#FFD166;--accSoft:rgba(255,209,102,.13);--accLine:rgba(255,209,102,.45)}
   body[data-day="RANDOM"]{--acc:#FF4D8D;--accSoft:rgba(255,77,141,.14);--accLine:rgba(255,77,141,.45)}
+  body[data-day="COACH"]{--acc:#2DD4BF;--accSoft:rgba(45,212,191,.14);--accLine:rgba(45,212,191,.45)}
 
   *{box-sizing:border-box;margin:0;padding:0}
   html{-webkit-text-size-adjust:100%}
