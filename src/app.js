@@ -15,7 +15,7 @@ const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="26.7";
+const APP_VERSION="26.8";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
@@ -157,7 +157,11 @@ function normState(st){
   // ECCEZIONE: un account nuovo in attesa di onboarding DEVE restare vuoto,
   // altrimenti si ritroverebbe la scheda di un altro utente.
   const totEx=(st.days||[]).reduce((a,d)=>a+((d.ex&&d.ex.length)||0),0);
-  if(totEx===0&&!st.pendingOnb){const keep={log:st.log,body:st.body,cfg:st.cfg,profile:st.profile,rnd:st.rnd,saved:st.saved};
+  if(totEx===0&&!st.pendingOnb){
+    // si conserva TUTTO cio' che non sono i giorni: prima il ripristino
+    // buttava via chat, conversazione coach, prompt personalizzati e libreria utente
+    const keep={log:st.log,body:st.body,cfg:st.cfg,profile:st.profile,rnd:st.rnd,saved:st.saved,
+                chat:st.chat,coach:st.coach,promptOv:st.promptOv,customLib:st.customLib};
     st=structuredClone(D);Object.keys(keep).forEach(k=>{if(keep[k]!==undefined)st[k]=keep[k]})}
   // garantisci campi minimi su ogni giorno/esercizio (evita crash da strutture parziali salvate)
   st.days.forEach((d,idx)=>{
@@ -177,6 +181,7 @@ function normState(st){
   if(st.rnd===undefined)st.rnd=null;
   if(!st.saved)st.saved=[];
   if(!st.coach)st.coach={mode:null,msgs:[],plan:null};
+  if(!st.promptOv)st.promptOv={};
   return migrate(st);
 }
 /* Profilo vuoto per un account nuovo: struttura dei 3 giorni e mobilita',
@@ -1182,30 +1187,71 @@ function renderSettings(){
         <button id="st_logout">${window.cloudEmail&&window.cloudEmail()?"Esci":"Accedi"}</button></div>
     </div>
 
-    <div class="card">
-      <h4>Le mie schede</h4>
+    <details class="card sett">
+      <summary><h4>Scheda</h4><small>cambia, importa, ripristina</small></summary>
       <div class="cfgrow"><span class="cl">Cambia scheda di allenamento<small>${(S.days||[]).length} giorni in servizio · ${((S.saved||[]).filter(x=>x.kind==="ciclo")).length} in archivio. Lo storico resta unico</small></span>
         <button id="st_schede">Apri</button></div>
-    </div>
-
-    <div class="card">
-      <h4>Analisi automatica</h4>
-      <div class="cfgrow"><span class="cl">Valuta le sedute con l'AI<small>${anyAIKey()?aiConfigured().length+" motor"+(aiConfigured().length===1?"e":"i")+" pronti":"nessun motore configurato"}</small></span>
-        <button id="st_ai">Analizza</button></div>
-      <div class="cfgrow"><span class="cl">Motori AI<small>${aiConfigured().length?aiConfigured().map(p=>esc(p.nome)).join(", "):"nessuno configurato"} — aggiungi, prova, scegli quale usare</small></span>
-        <button id="st_gem">${anyAIKey()?"Gestisci":"Configura"}</button></div>
-      <div class="cfgrow"><span class="cl">Chiedi al preparatore<small>${anyAIKey()?((S.chat||[]).length?((S.chat||[]).length+" messaggi in memoria"):"domande sull'allenamento, con la tua scheda sott'occhio"):"serve una chiave AI"}</small></span>
-        <button id="st_chat" ${anyAIKey()?"":"disabled"}>Apri</button></div>
-      <div class="cfgrow"><span class="cl">Fai rileggere la scheda<small>l'AI segnala squilibri di volume. I carichi restano quelli calcolati dall'app</small></span>
-        <button id="st_rev" ${anyAIKey()?"":"disabled"}>Revisiona</button></div>
-      <div class="cfgrow"><span class="cl">Importa scheda da foto o testo<small>${gemKey()?"l'AI la legge e la trascrive, con conferma prima di applicare":"serve la chiave Google (e' l'unica che legge le foto)"}</small></span>
-        <button id="st_imp" ${gemKey()?"":"disabled"}>Importa</button></div>
+      <div class="cfgrow"><span class="cl">Importa una nuova scheda<small>da foto o file — sostituisce solo i giorni, storico e misure restano</small></span>
+        <button id="st_impsch">Importa</button></div>
       <div class="cfgrow"><span class="cl">Nomi dei giorni<small>${(S.days||[]).map(x=>x.id).join(" · ")} — la lettera resta, cambia la descrizione</small></span>
         <button id="st_nomi">Rinomina</button></div>
-      ${isOwner()?`<div class="cfgrow"><span class="cl">Moderazione libreria<small>proposte degli utenti in attesa di approvazione</small></span>
-        <button id="st_mod">Apri</button></div>`:""}
+      <div class="cfgrow"><span class="cl">Ripristina la scheda di partenza<small>riporta i giorni ai valori iniziali</small></span>
+        <button id="st_reset">Ripristina</button></div>
+    </details>
+
+    <details class="card sett">
+      <summary><h4>Intelligenza artificiale</h4><small>${anyAIKey()?aiConfigured().length+" motor"+(aiConfigured().length===1?"e pronto":"i pronti"):"da configurare"}</small></summary>
+      <div class="cfgrow"><span class="cl">Motori AI<small>${aiConfigured().length?aiConfigured().map(p=>esc(p.nome)).join(", "):"nessuno configurato"} — aggiungi, prova, scegli quale usare</small></span>
+        <button id="st_gem">${anyAIKey()?"Gestisci":"Configura"}</button></div>
+      <div class="cfgrow"><span class="cl">Valuta le sedute<small>analisi di carichi, stalli e volume sulle ultime settimane</small></span>
+        <button id="st_ai" ${anyAIKey()?"":"disabled"}>Analizza</button></div>
+      <div class="cfgrow"><span class="cl">Chiedi al preparatore<small>${anyAIKey()?((S.chat||[]).length?((S.chat||[]).length+" messaggi in memoria"):"domande sull'allenamento, con la tua scheda sott'occhio"):"serve una chiave AI"}</small></span>
+        <button id="st_chat" ${anyAIKey()?"":"disabled"}>Apri</button></div>
+      <div class="cfgrow"><span class="cl">Fai rileggere la scheda<small>l'AI segnala squilibri di volume</small></span>
+        <button id="st_rev" ${anyAIKey()?"":"disabled"}>Revisiona</button></div>
+      <div class="cfgrow"><span class="cl">Importa scheda da foto o testo<small>${gemKey()?"con conferma prima di applicare":"serve la chiave Google (e' l'unica che legge le foto)"}</small></span>
+        <button id="st_imp" ${gemKey()?"":"disabled"}>Importa</button></div>
+      <div class="cfgrow"><span class="cl">Aggiorna la scheda<small>incolla le modifiche suggerite dall'AI, con anteprima</small></span>
+        <button id="st_patch">Incolla</button></div>
+      <div class="cfgrow"><span class="cl">Esporta sedute<small>per farle analizzare fuori dall'app · ultima: ${ago(lastExp)}</small></span>
+        <button id="st_export">Esporta</button></div>
+      <div class="cfgrow"><span class="cl">Prompt AI<small>leggi e modifica le istruzioni fisse che l'app manda ai motori</small></span>
+        <button id="st_prompts">Apri</button></div>
       <div class="cfgrow"><span class="cl">Aggiungi un macchinario<small>${anyAIKey()?"scrivi il nome, l'AI lo identifica e lo mette in libreria":"serve una chiave AI"}</small></span>
         <button id="st_mac" ${anyAIKey()?"":"disabled"}>Aggiungi</button></div>
+      ${isOwner()?`<div class="cfgrow"><span class="cl">Moderazione libreria<small>proposte degli utenti in attesa di approvazione</small></span>
+        <button id="st_mod">Apri</button></div>`:""}
+    </details>
+
+    <details class="card sett">
+      <summary><h4>Profilo e allenamento</h4><small>${esc((p.nome||"")+(p.cognome?" "+p.cognome:""))||MU.users.length+" profil"+(MU.users.length===1?"o":"i")}</small></summary>
+      <div class="cfgrow"><span class="cl">Nome</span><input class="txt" id="st_nome" value="${esc(p.nome||"")}" placeholder="Nome"></div>
+      <div class="cfgrow"><span class="cl">Cognome</span><input class="txt" id="st_cognome" value="${esc(p.cognome||"")}" placeholder="Cognome"></div>
+      <div class="cfgrow"><span class="cl">Profili<small>${MU.users.length} profil${MU.users.length===1?"o":"i"} · ${nSess} sedute · ${nSaved} schede salvate</small></span>
+        <button id="st_users">Gestisci</button></div>
+      <div class="cfgrow"><span class="cl">Ricalibra i carichi<small>rifai le domande iniziali. I carichi impostati a mano non vengono toccati</small></span>
+        <button id="st_recal">Ricalibra</button></div>
+      <div class="cfgrow"><span class="cl">Cadenza allenamenti<small>oltre questa soglia l'app te lo segnala</small></span>
+        <input id="st_gap" inputmode="numeric" value="${S.cfg.gap}"><span class="lbl">gg</span></div>
+      <div class="cfgrow"><span class="cl">Durata target seduta</span>
+        <input id="st_target" inputmode="numeric" value="${S.cfg.target}"><span class="lbl">min</span></div>
+      <div class="cfgrow"><span class="cl">Notifiche di fine recupero<small>avviso quando sei su un'altra app</small></span>
+        <button id="st_notif" class="${S.cfg.notif?"on":""}">${S.cfg.notif?"Attive ✓":"Attiva"}</button></div>
+    </details>
+
+    <details class="card sett">
+      <summary><h4>Backup</h4><small>ultimo: ${ago(lastBkp)}</small></summary>
+      <div class="sub" style="margin:0 0 8px">Esporta ogni tanto: è la tua rete di sicurezza.</div>
+      <div class="cfgrow"><span class="cl">Esporta backup<small>tutti i profili · ultimo: ${ago(lastBkp)}</small></span>
+        <button id="st_exp">Esporta</button></div>
+      <div class="cfgrow"><span class="cl">Importa backup<small>da file o incollando il testo</small></span>
+        <button id="st_bkimp">Importa</button></div>
+      <div class="cfgrow"><span class="cl">Svuota lo storico<small>cancella le sedute registrate</small></span>
+        <button id="st_clr" class="danger">Svuota</button></div>
+    </details>
+
+    <details class="card sett">
+      <summary><h4>Altro</h4><small>tutorial, installazione, versione</small></summary>
       <div class="cfgrow"><span class="cl">Rivedi il tutorial<small>RIR, superserie, calibrazione, deload</small></span>
         <button id="st_tut">Apri</button></div>
       <div class="cfgrow"><span class="cl">Installa sulla schermata Home<small>${isStandalone()?"gia' installata":"si apre a schermo intero, senza barre"}</small></span>
@@ -1214,54 +1260,7 @@ function renderSettings(){
         <button id="st_snap" ${S._snap?"":"disabled"}>Ripristina</button></div>
       <div class="cfgrow"><span class="cl">Versione<small>schema dati ${SCHEMA_VERSION}</small></span>
         <span class="lbl">v${APP_VERSION}</span></div>
-    </div>
-
-    <div class="card">
-      <h4>Profilo</h4>
-      <div class="cfgrow"><span class="cl">Nome</span><input class="txt" id="st_nome" value="${esc(p.nome||"")}" placeholder="Nome"></div>
-      <div class="cfgrow"><span class="cl">Cognome</span><input class="txt" id="st_cognome" value="${esc(p.cognome||"")}" placeholder="Cognome"></div>
-      <div class="cfgrow"><span class="cl">Profili<small>${MU.users.length} profil${MU.users.length===1?"o":"i"} · ${nSess} sedute · ${nSaved} schede salvate</small></span>
-        <button id="st_users">Gestisci</button></div>
-      <div class="cfgrow"><span class="cl">Ricalibra i carichi<small>rifai le domande iniziali. I carichi che hai impostato a mano non vengono toccati</small></span>
-        <button id="st_recal">Ricalibra</button></div>
-    </div>
-
-    <div class="card">
-      <h4>Allenamento</h4>
-      <div class="cfgrow"><span class="cl">Cadenza allenamenti<small>oltre questa soglia l'app te lo segnala</small></span>
-        <input id="st_gap" inputmode="numeric" value="${S.cfg.gap}"><span class="lbl">gg</span></div>
-      <div class="cfgrow"><span class="cl">Durata target seduta</span>
-        <input id="st_target" inputmode="numeric" value="${S.cfg.target}"><span class="lbl">min</span></div>
-      <div class="cfgrow"><span class="cl">Notifiche di fine recupero<small>avviso quando sei su un'altra app</small></span>
-        <button id="st_notif" class="${S.cfg.notif?"on":""}">${S.cfg.notif?"Attive ✓":"Attiva"}</button></div>
-    </div>
-
-    <div class="card">
-      <h4>Analisi con l'AI</h4>
-      <div class="cfgrow"><span class="cl">Esporta sedute<small>ultima esportazione: ${ago(lastExp)}</small></span>
-        <button id="st_export" class="on">Esporta</button></div>
-      <div class="cfgrow"><span class="cl">Aggiorna la scheda<small>incolla le modifiche suggerite dall'AI, con anteprima</small></span>
-        <button id="st_patch">Incolla modifiche</button></div>
-    </div>
-
-    <div class="card">
-      <h4>Schede e dati</h4>
-      <div class="cfgrow"><span class="cl">Importa una nuova scheda<small>sostituisce solo i giorni A/B/C — storico e misure restano</small></span>
-        <button id="st_impsch">Importa scheda</button></div>
-      <div class="cfgrow"><span class="cl">Ripristina la scheda di partenza<small>riporta i giorni ai valori iniziali</small></span>
-        <button id="st_reset">Ripristina</button></div>
-    </div>
-
-    <div class="card">
-      <h4>Backup completo</h4>
-      <div class="sub" style="margin:0 0 8px">I dati vivono solo su questo dispositivo. Esporta ogni tanto: è la tua rete di sicurezza.</div>
-      <div class="cfgrow"><span class="cl">Esporta backup<small>tutti i profili · ultimo: ${ago(lastBkp)}</small></span>
-        <button id="st_exp">Esporta</button></div>
-      <div class="cfgrow"><span class="cl">Importa backup<small>da file o incollando il testo</small></span>
-        <button id="st_bkimp">Importa</button></div>
-      <div class="cfgrow"><span class="cl">Svuota lo storico<small>cancella le sedute registrate</small></span>
-        <button id="st_clr" class="danger">Svuota</button></div>
-    </div>
+    </details>
     <div class="sub" style="text-align:center;padding:6px 0 2px">Scheda Full Body · v${APP_VERSION}</div>`);
 
   const g=id=>document.getElementById(id);
@@ -1306,6 +1305,7 @@ function renderSettings(){
   };
   g("st_export").onclick=()=>exportAsk(false);
   g("st_patch").onclick=importPatchAsk;
+  g("st_prompts").onclick=promptsAsk;
   g("st_impsch").onclick=importSchedaFromPhotoAsk;
   g("st_reset").onclick=async()=>{
     if(!await ask("Riporto i giorni A/B/C ai valori di partenza?<br><small style='color:var(--soft)'>Storico, misure e profilo restano.</small>","Ripristina"))return;
@@ -1576,6 +1576,78 @@ const COACH_MODES=[
 ];
 let coachBusy=false;
 
+/* ---- prompt visibili e modificabili ----
+   Le parti FISSE dei prompt (personaggi del coach, regole, istruzioni della
+   chat e dell'analisi) sono raccolte qui e sovrascrivibili dall'utente da
+   Impostazioni > Prompt AI. Le parti DINAMICHE (scheda, storico, misure)
+   vengono composte a ogni chiamata e non sono modificabili: sono dati, non
+   istruzioni. Le personalizzazioni vivono in S.promptOv e si sincronizzano
+   col resto dello stato. */
+const COACH_REGOLE_DFLT=[
+  "Regole di comportamento:",
+  "- Fai UNA domanda alla volta, non un questionario intero: aspetta la risposta prima di proseguire.",
+  "- Sii sincero: se una richiesta non e' realistica per il livello, il tempo o l'attrezzatura dell'atleta, diglielo chiaramente, poi proponi un'alternativa credibile.",
+  "- Motiva senza essere finto o generico: parla come un allenatore vero, non come un depliant pubblicitario.",
+  "- Quando hai raccolto obiettivo, giorni disponibili a settimana, tempo per sessione, attrezzatura ed eventuali limitazioni fisiche, proponi la scheda."].join("\n");
+const CHAT_REGOLE_DFLT=[
+  "Sei il personal trainer di questo atleta: esperto di forza, ipertrofia e ricomposizione.",
+  "Rispondi in italiano, diretto e tecnico, senza premesse di sicurezza e senza giri di parole.",
+  "MASSIMO 120 parole. Vai al punto. Se i dati non bastano per rispondere, dillo e chiedi cosa ti serve."].join("\n");
+const ANALISI_RUOLO_DFLT="Agisci come il mio personal trainer, esperto di ipertrofia, forza e ricomposizione corporea.";
+const PROMPT_DEFS=[
+  ["coach_funzionale","Coach — personaggio Funzionale",()=>COACH_MODES[0][3]],
+  ["coach_sportivo","Coach — personaggio Sportivo",()=>COACH_MODES[1][3]],
+  ["coach_forza","Coach — personaggio Forza",()=>COACH_MODES[2][3]],
+  ["coach_elasticita","Coach — personaggio Elasticità",()=>COACH_MODES[3][3]],
+  ["coach_regole","Coach — regole di comportamento",()=>COACH_REGOLE_DFLT],
+  ["chat_regole","Chiedi al preparatore — istruzioni",()=>CHAT_REGOLE_DFLT],
+  ["analisi_ruolo","Analisi sedute — ruolo",()=>ANALISI_RUOLO_DFLT]
+];
+function pv(id){
+  const d=PROMPT_DEFS.find(x=>x[0]===id);
+  const o=S.promptOv&&S.promptOv[id];
+  return (o&&String(o).trim())?String(o):(d?d[2]():"");
+}
+
+function promptsAsk(){
+  const sheet=document.getElementById("sheet");
+  const draw=()=>{
+    sheet.innerHTML=`
+      <h3>Prompt AI</h3>
+      <div class="sub">Queste sono le istruzioni fisse che l'app manda ai motori AI. Puoi riscriverle a modo tuo: la versione modificata vale su tutti i motori e si sincronizza col tuo account. I dati (scheda, storico, misure) vengono aggiunti automaticamente e non si toccano da qui.</div>
+      ${PROMPT_DEFS.map(([id,label])=>{
+        const custom=!!(S.promptOv&&S.promptOv[id]&&String(S.promptOv[id]).trim());
+        return `<div class="card" style="padding:11px 13px;margin-top:10px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <b style="flex:1;font-size:13px">${esc(label)}</b>
+            ${custom?`<span class="tag alt">MODIFICATO</span>`:""}
+          </div>
+          <textarea class="urlin pr_txt" data-id="${id}" rows="4" style="resize:vertical;margin-top:8px;font-size:13px;font-family:'IBM Plex Mono',monospace">${esc(pv(id))}</textarea>
+          <div style="display:flex;gap:7px;margin-top:7px">
+            <button class="genbtn pr_save" data-id="${id}" style="flex:1;margin:0;padding:9px">Salva</button>
+            ${custom?`<button class="revert pr_reset" data-id="${id}" style="flex:none;width:auto;margin:0">Originale</button>`:""}
+          </div>
+        </div>`;
+      }).join("")}
+      <button class="closebtn" id="pr_close" style="margin-top:12px">Chiudi</button>`;
+    sheet.querySelector("#pr_close").onclick=closeModal;
+    sheet.querySelectorAll(".pr_save").forEach(b=>b.onclick=()=>{
+      const id=b.dataset.id;
+      const t=(sheet.querySelector(`.pr_txt[data-id="${id}"]`).value||"").trim();
+      if(!S.promptOv)S.promptOv={};
+      const d=PROMPT_DEFS.find(x=>x[0]===id);
+      if(!t||t===d[2]())delete S.promptOv[id];   // vuoto o identico = torna all'originale
+      else S.promptOv[id]=t.slice(0,2000);
+      save();draw();toast("Prompt salvato");
+    });
+    sheet.querySelectorAll(".pr_reset").forEach(b=>b.onclick=()=>{
+      delete S.promptOv[b.dataset.id];save();draw();toast("Ripristinato l'originale");
+    });
+  };
+  draw();
+  document.getElementById("modal").classList.add("on");
+}
+
 function renderCoach(){
   main.insertAdjacentHTML("beforeend",`<div class="dayhead"><div class="eyebrow">Allenatore virtuale · ti conosce solo per quello che gli racconti</div><h2>Coach</h2></div>`);
   if(!anyAIKey()){
@@ -1694,16 +1766,12 @@ function buildCoachPrompt(userText){
   const info=coachModeInfo();
   const storia=(S.coach.msgs||[]).slice(-16).map(m=>(m.r==="u"?"ATLETA: ":"COACH: ")+m.t).join("\n");
   return [
-    info[3],
+    pv("coach_"+info[0])||info[3],
     "",
     "Contesto sull'atleta che stai allenando (tienilo sempre presente, non ripartire mai da zero):",
     coachCtx(),
     "",
-    "Regole di comportamento:",
-    "- Fai UNA domanda alla volta, non un questionario intero: aspetta la risposta prima di proseguire.",
-    "- Sii sincero: se una richiesta non e' realistica per il livello, il tempo o l'attrezzatura dell'atleta, diglielo chiaramente, poi proponi un'alternativa credibile.",
-    "- Motiva senza essere finto o generico: parla come un allenatore vero, non come un depliant pubblicitario.",
-    "- Quando hai raccolto obiettivo, giorni disponibili a settimana, tempo per sessione, attrezzatura ed eventuali limitazioni fisiche, proponi la scheda.",
+    pv("coach_regole"),
     "- Se e solo se e' il momento di proporre la scheda completa, chiudi la risposta con ESATTAMENTE un blocco cosi' (sostituendo i valori, IC solo tra: squat, hinge, hpress, vpress, hpull, vpull, curl, tri, lat, calf, core, lunge, legpress, face):",
     "```SCHEDA_COACH",
     '{"days":[{"id":"A","focus":"descrizione breve","ex":[{"n":"Nome esercizio","ic":"squat","w":0,"inc":2.5,"rest":90,"r":"8-10","sets":3,"note":""}]}]}',
@@ -1756,6 +1824,18 @@ function drawCoachPlanBox(el,days){
   const stats=cycleStats(days);
   el.innerHTML=`<div class="nextbox" style="margin-top:10px">
     <b>Proposta pronta</b> — ${stats.giorni} giorni, ${stats.esercizi} esercizi, ${stats.serie} serie.
+    <div style="max-height:38vh;overflow-y:auto;margin-top:8px">
+      ${days.map(d=>`<div style="background:var(--card2);border:1px solid var(--line);border-radius:var(--r);padding:9px 11px;margin-bottom:7px">
+        <b style="font-family:'Anton',sans-serif;text-transform:uppercase;letter-spacing:.05em;font-size:12px;color:var(--acc)">Giorno ${esc(d.id)}</b>
+        <span style="color:var(--soft);font-size:12px"> · ${esc(d.focus||"")}</span>
+        <ul style="list-style:none;margin-top:5px;font-size:13px;color:var(--soft)">
+          ${(d.ex||[]).map(e=>`<li style="display:flex;justify-content:space-between;gap:8px;padding:2px 0">
+            <span>${esc(e.n)}</span>
+            <b style="font-family:'IBM Plex Mono',monospace;color:var(--text);white-space:nowrap">${(e.sets||[]).length}×${esc(e.r||"")}${e.w?` · ${fmt(e.w)}kg`:""}</b>
+          </li>`).join("")}
+        </ul>
+      </div>`).join("")}
+    </div>
     <button class="genbtn" id="cch_activate" style="width:100%;margin:8px 0 0">Metti in servizio ora</button>
     <div style="display:flex;gap:8px;margin-top:8px">
       <button class="revert" id="cch_save" style="flex:1;width:auto;margin:0">Salva soltanto</button>
@@ -1779,9 +1859,13 @@ async function activateCoachPlan(days){
   S.days=structuredClone(days);
   S.days.forEach(d=>(d.ex||[]).forEach(e=>(e.sets||[]).forEach(s=>{s.done=false;s.r=""})));
   S.coach.plan=null;
-  S.coach.msgs.push({r:"a",t:"Fatto — è la tua scheda attiva adesso. Trovi i giorni A/B/C qui sopra: si comincia da li'. Quando l'avrai allenata un po' torna a raccontarmi come sta andando.",p:null});
+  S.coach.msgs.push({r:"a",t:"Fatto — è la tua scheda attiva adesso: ti ho portato sul primo giorno, si comincia da li'. Quando l'avrai allenata un po' torna a raccontarmi come sta andando.",p:null});
+  /* portiamo l'atleta direttamente sul primo giorno della nuova scheda:
+     "metti in servizio" deve significare potersi allenare subito, non
+     dover andare a cercare dove e' finita */
+  view=S.days[0]?S.days[0].id:"A";store.set("scheda_view",view);
   save();render();updateBarInfo();
-  toast("Scheda attivata");
+  toast("Scheda attivata — sei sul giorno "+view);
 }
 
 function saveCoachPlan(days){
@@ -2149,7 +2233,7 @@ function buildPromptMd(kind,mode){
   mode=mode||store.get("ai_mode")||"breve";
   const names=LIB.map(a=>a[0]);
   const P=[];
-  P.push("Agisci come il mio personal trainer, esperto di ipertrofia, forza e ricomposizione corporea.");
+  P.push(pv("analisi_ruolo"));
   P.push("");
   if(mode==="patch"){
     P.push("RISPOSTA MOLTO BREVE. Non scrivere analisi discorsive, non fare premesse, non elencare cosa hai osservato.");
@@ -3564,26 +3648,32 @@ async function pullAIKeys(){
     if(!r.ok)return;
     const rows=await r.json().catch(()=>[]);
     const k=rows&&rows[0]; if(!k)return;
-    /* il locale vince se presente: e' l'ultima volonta' espressa su QUESTO device */
+    /* il locale vince se presente: e' l'ultima volonta' espressa su QUESTO device.
+       Si importano solo chiavi di motori ancora nel registro: il cloud puo'
+       contenere quelle dei provider a pagamento rimossi. */
     const chiavi=k.chiavi||{};
-    Object.keys(chiavi).forEach(id=>{if(chiavi[id]&&!aiKey(id))setAiKey(id,chiavi[id])});
+    Object.keys(chiavi).forEach(id=>{if(chiavi[id]&&AIP(id)&&!aiKey(id))setAiKey(id,chiavi[id])});
     // colonne della versione precedente, per chi aggiorna da v25.4/25.6
-    [["gemini_key","gemini"],["groq_key","groq"],["mistral_key","mistral"],["deepseek_key","deepseek"]]
+    [["gemini_key","gemini"],["groq_key","groq"],["mistral_key","mistral"]]
       .forEach(([col,id])=>{if(k[col]&&!aiKey(id))setAiKey(id,k[col])});
     if(k.ai_provider&&!store.get("ai_provider"))store.set("ai_provider",k.ai_provider);
   }catch(e){}
 }
+/* ritorna true solo se il cloud ha DAVVERO ricevuto le chiavi: chi chiama
+   puo' cosi' avvisare invece di dire "salvato" mentre la richiesta moriva
+   in background (era il motivo delle chiavi che "sparivano" cambiando device) */
 async function pushAIKeys(){
-  if(!SESSION||!CLOUD_USER)return;
+  if(!SESSION||!CLOUD_USER)return false;
   try{
-    await fetch(`${SUPA_URL}/rest/v1/user_ai_keys?on_conflict=user_id`,{
+    const r=await fetch(`${SUPA_URL}/rest/v1/user_ai_keys?on_conflict=user_id`,{
       method:"POST",
       headers:{"Authorization":"Bearer "+SESSION.access_token,"apikey":SUPA_KEY,
                "Content-Type":"application/json","Prefer":"resolution=merge-duplicates,return=minimal"},
       body:JSON.stringify({user_id:CLOUD_USER.id,
         chiavi:Object.fromEntries(AI_PROVIDERS.map(p=>[p.id,aiKey(p.id)]).filter(([,v])=>v)),
         ai_provider:aiProvider(),aggiornato:new Date().toISOString()})});
-  }catch(e){}
+    return r.ok;
+  }catch(e){return false}
 }
 
 /* ============ REGISTRO DEI PROVIDER AI ============
@@ -3605,11 +3695,6 @@ const AI_PROVIDERS=[
   nota:"Gratuita e molto veloce. Nessun costo, solo un limite al minuto.",
   consoleUrl:"https://console.groq.com/keys", ph:"gsk_…",
   guida:"Accedi, apri API Keys, premi Create API Key e copia subito la chiave."},
- {id:"deepseek",nome:"DeepSeek", tipo:"openai",
-  url:"https://api.deepseek.com/chat/completions", model:"deepseek-chat",
-  nota:"Cinese, tra le piu' capaci in assoluto. Costo bassissimo, serve una piccola ricarica.",
-  consoleUrl:"https://platform.deepseek.com/api_keys", ph:"sk-…",
-  guida:"Accedi, apri API keys, crea la chiave e copiala."},
  {id:"qwen",    nome:"Qwen — Alibaba", tipo:"openai",
   url:"https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions", model:"qwen-plus",
   nota:"Cinese, ottima sui testi lunghi. Quota di prova gratuita generosa.",
@@ -3640,26 +3725,6 @@ const AI_PROVIDERS=[
   nota:"Gratuita, la piu' rapida in assoluto a rispondere.",
   consoleUrl:"https://cloud.cerebras.ai/", ph:"csk-…",
   guida:"Accedi, sezione API Keys, crea la chiave e copiala."},
- {id:"together",nome:"Together AI", tipo:"openai",
-  url:"https://api.together.xyz/v1/chat/completions", model:"meta-llama/Llama-3.3-70B-Instruct-Turbo",
-  nota:"Credito gratuito iniziale, poi a consumo.",
-  consoleUrl:"https://api.together.xyz/settings/api-keys", ph:"…",
-  guida:"Accedi, apri le impostazioni API keys e copia la chiave."},
- {id:"xai",     nome:"xAI — Grok", tipo:"openai",
-  url:"https://api.x.ai/v1/chat/completions", model:"grok-2-latest",
-  nota:"A consumo, con credito di prova.",
-  consoleUrl:"https://console.x.ai/", ph:"xai-…",
-  guida:"Accedi, sezione API Keys, crea la chiave e copiala."},
- {id:"openai",  nome:"OpenAI", tipo:"openai",
-  url:"https://api.openai.com/v1/chat/completions", model:"gpt-4o-mini",
-  nota:"A pagamento a consumo. Richiede credito sul conto.",
-  consoleUrl:"https://platform.openai.com/api-keys", ph:"sk-…",
-  guida:"Accedi, apri API keys, crea la chiave e copiala."},
- {id:"anthropic",nome:"Anthropic — Claude", tipo:"anthropic",
-  url:"https://api.anthropic.com/v1/messages", model:"claude-sonnet-4-5",
-  nota:"A pagamento a consumo. Ottima sui testi articolati.",
-  consoleUrl:"https://console.anthropic.com/settings/keys", ph:"sk-ant-…",
-  guida:"Accedi, apri Settings, API keys, crea la chiave e copiala."},
  {id:"github",  nome:"GitHub Models", tipo:"openai",
   url:"https://models.github.ai/inference/chat/completions", model:"openai/gpt-4o-mini",
   nota:"Gratuita con un account GitHub gia' esistente, limiti di frequenza per uso personale.",
@@ -3682,18 +3747,27 @@ const setAiKey=(id,v)=>{v=(v||"").trim();if(v)store.set("aikey_"+id,v);else stor
 const aiConfigured=()=>AI_PROVIDERS.filter(p=>aiKey(p.id));
 const anyAIKey=()=>aiConfigured().length>0;
 const gemKey=()=>aiKey("gemini");
-const aiProvider=()=>store.get("ai_provider")||"auto";   // auto | <id>
+/* se il motore preferito salvato non esiste piu' nel registro (es. provider
+   a pagamento rimossi in v26.8), si torna ad "auto" invece di bloccare ogni
+   chiamata con "Motore non riconosciuto" */
+const aiProvider=()=>{
+  const p=store.get("ai_provider")||"auto";
+  if(p!=="auto"&&!AIP(p)){store.set("ai_provider","auto");return "auto"}
+  return p;
+};
 let LAST_AI="";                                          // chi ha risposto per ultimo
 const isLimitError=e=>/limite|quota|429|rate|exhaust|insufficient/i.test(String(e&&e.message||e||""));
 
 /* le chiavi vecchie (v25.x) migrano ai nuovi nomi, una volta sola */
 (function migraChiavi(){
-  const map={gem_key:"gemini",groq_key:"groq",mistral_key:"mistral",deepseek_key:"deepseek"};
+  const map={gem_key:"gemini",groq_key:"groq",mistral_key:"mistral"};
   Object.keys(map).forEach(vecchia=>{
     const v=store.get(vecchia);
     if(v&&!store.get("aikey_"+map[vecchia]))store.set("aikey_"+map[vecchia],v);
     if(v)store.del(vecchia);
   });
+  // chiavi di provider a pagamento rimossi dal registro: via anche dal device
+  ["deepseek","together","xai","openai","anthropic"].forEach(id=>store.del("aikey_"+id));
 })();
 
 /* ---- chiamate: tre formati, un solo prompt ---- */
@@ -3715,29 +3789,10 @@ async function callOpenAIStyle(p,key,prompt){
   if(!txt)throw new Error(p.nome+": risposta vuota.");
   return txt;
 }
-async function callAnthropic(p,key,prompt){
-  const r=await fetch(p.url,{
-    method:"POST",
-    headers:{"Content-Type":"application/json","x-api-key":key,
-             "anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-    body:JSON.stringify({model:p.model,max_tokens:2000,messages:[{role:"user",content:prompt}]})
-  });
-  const j=await r.json().catch(()=>({}));
-  if(!r.ok){
-    const m=(j.error&&j.error.message)||"";
-    if(r.status===429)throw new Error(p.nome+": limite raggiunto.");
-    if(r.status===401)throw new Error(p.nome+": chiave non valida.");
-    throw new Error(p.nome+": "+(m||"errore "+r.status));
-  }
-  const txt=(j.content||[]).map(c=>c.text||"").join("");
-  if(!txt)throw new Error(p.nome+": risposta vuota.");
-  return txt;
-}
 function callProvider(p,prompt){
   const key=aiKey(p.id);
   if(!key)return Promise.reject(new Error(p.nome+": chiave non impostata."));
   if(p.tipo==="gemini")return askGeminiRaw(prompt);
-  if(p.tipo==="anthropic")return callAnthropic(p,key,prompt);
   return callOpenAIStyle(p,key,prompt);
 }
 
@@ -4655,14 +4710,24 @@ function gemSetupAsk(){
     });
     /* niente controlli sul formato della chiave: ogni servizio usa il suo, e
        un falso allarme qui blocca chi ha incollato la chiave giusta */
-    sheet.querySelectorAll(".ai_save").forEach(b=>b.onclick=()=>{
+    /* si aspetta la conferma del cloud PRIMA di dire "salvato sul tuo account":
+       su iPhone chiudere Safari subito dopo il tocco uccideva la richiesta in
+       background e la chiave restava solo sul telefono, senza che si sapesse */
+    sheet.querySelectorAll(".ai_save").forEach(b=>b.onclick=async()=>{
       const id=b.dataset.id;
       const inp=sheet.querySelector(`.ai_in[data-id="${id}"]`);
       const v=(inp.value||"").trim();
       if(!v){toast("Incolla prima la chiave");return}
-      setAiKey(id,v);pushAIKeys();
+      setAiKey(id,v);
       if(!S.ai)S.ai={};S.ai.setupDone=true;save();
-      toast(SESSION?AIP(id).nome+" salvato sul tuo account":AIP(id).nome+" salvato su questo dispositivo");
+      if(SESSION){
+        b.textContent="Salvo…";b.disabled=true;
+        const ok=await pushAIKeys();
+        toast(ok?AIP(id).nome+" salvato sul tuo account"
+                :AIP(id).nome+" salvato su questo dispositivo — sync col cloud fallita, riprova con piu' rete");
+      }else{
+        toast(AIP(id).nome+" salvato su questo dispositivo");
+      }
       draw();
     });
     sheet.querySelectorAll(".ai_del").forEach(b=>b.onclick=async()=>{
@@ -5076,9 +5141,7 @@ function aiChatAsk(){
        il resto e' gia' nella storia che il modello riceve comunque */
     const primoTurno=S.chat.filter(m=>m.r==="u").length<=1;
     const contesto=primoTurno?ctxForAI(view):ctxCompact(view);
-    const P=["Sei il personal trainer di questo atleta: esperto di forza, ipertrofia e ricomposizione.",
-      "Rispondi in italiano, diretto e tecnico, senza premesse di sicurezza e senza giri di parole.",
-      "MASSIMO 120 parole. Vai al punto. Se i dati non bastano per rispondere, dillo e chiedi cosa ti serve.",
+    const P=[pv("chat_regole"),
       "Se proponi una modifica concreta alla scheda, chiudi con un blocco applicabile:",
       "PATCH SCHEDA / GIORNO X / NomeEsercizio: carico N  (oppure serie N, ripetizioni X, pausa N)",
       "Una riga per modifica. Se non proponi modifiche, non scrivere il blocco.",
