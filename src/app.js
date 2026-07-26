@@ -15,7 +15,7 @@ const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="26.6";
+const APP_VERSION="26.7";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
@@ -3659,7 +3659,22 @@ const AI_PROVIDERS=[
   url:"https://api.anthropic.com/v1/messages", model:"claude-sonnet-4-5",
   nota:"A pagamento a consumo. Ottima sui testi articolati.",
   consoleUrl:"https://console.anthropic.com/settings/keys", ph:"sk-ant-…",
-  guida:"Accedi, apri Settings, API keys, crea la chiave e copiala."}
+  guida:"Accedi, apri Settings, API keys, crea la chiave e copiala."},
+ {id:"github",  nome:"GitHub Models", tipo:"openai",
+  url:"https://models.github.ai/inference/chat/completions", model:"openai/gpt-4o-mini",
+  nota:"Gratuita con un account GitHub gia' esistente, limiti di frequenza per uso personale.",
+  consoleUrl:"https://github.com/marketplace/models", ph:"github_pat_…",
+  guida:"Apri github.com/marketplace/models, scegli un modello, premi 'Get API key' (oppure crea un Personal Access Token con permesso models:read da Settings > Developer settings) e copialo."},
+ {id:"nvidia",  nome:"NVIDIA NIM", tipo:"openai",
+  url:"https://integrate.api.nvidia.com/v1/chat/completions", model:"meta/llama-3.3-70b-instruct",
+  nota:"Gratuita con signup, tanti modelli open-source ospitati da NVIDIA.",
+  consoleUrl:"https://build.nvidia.com/", ph:"nvapi-…",
+  guida:"Accedi su build.nvidia.com, apri un modello, premi 'Get API Key' e copiala."},
+ {id:"sambanova",nome:"SambaNova Cloud", tipo:"openai",
+  url:"https://api.sambanova.ai/v1/chat/completions", model:"Meta-Llama-3.3-70B-Instruct",
+  nota:"Gratuita, inferenza velocissima come Groq e Cerebras: un terzo fallback nella stessa fascia.",
+  consoleUrl:"https://cloud.sambanova.ai/apis", ph:"…",
+  guida:"Accedi, apri API Keys nel pannello, crea la chiave e copiala."}
 ];
 const AIP=id=>AI_PROVIDERS.find(p=>p.id===id);
 const aiKey=id=>store.get("aikey_"+id)||"";
