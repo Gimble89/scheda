@@ -15,7 +15,7 @@ const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="26.1";
+const APP_VERSION="26.2";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
@@ -1118,7 +1118,17 @@ function importBackupAsk(){
     if(o&&o.users&&o.users.length)mu=o;
     else if(o&&o.days)mu={active:"u1",users:[{id:"u1",name:(o.profile&&o.profile.nome)||"Profilo",state:o}]};
     if(!mu){out.innerHTML=`<div class="nextbox late" style="margin-top:10px">Struttura non riconosciuta: serve un backup completo (users) o una scheda singola (days).</div>`;return}
-    try{mu.users.forEach(u=>{u.state=normState(u.state||{})})}
+    try{
+      mu.users.forEach(u=>{
+        u.state=normState(u.state||{});
+        // Un backup e' un file esterno: applica gli stessi limiti di forma
+        // dell'import scheda, altrimenti un JSON malevolo puo' salvare
+        // giorni/esercizi/serie senza limite o note enormi.
+        const v=validateDays(u.state.days);
+        if(!v.ok)throw new Error(v.err);
+        u.state.days=v.days;
+      });
+    }
     catch(x){out.innerHTML=`<div class="nextbox late" style="margin-top:10px">Dati non riparabili: ${esc(x.message)}</div>`;return}
     const nSess=mu.users.reduce((a,u)=>a+((u.state.log||[]).length),0);
     const nEx=mu.users.reduce((a,u)=>a+((u.state.days||[]).reduce((b,d)=>b+((d.ex||[]).length),0)),0);
