@@ -15,7 +15,7 @@ const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="26.3";
+const APP_VERSION="26.4";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
@@ -1334,28 +1334,46 @@ function renderSettings(){
 const DIST2GRP={petto:"Petto",schiena:"Schiena",spalle:"Spalle",braccia:"Braccia",bicipiti:"Braccia",
                 tricipiti:"Braccia",gambe:"Gambe",core:"Core",addome:"Core",quad:"Gambe",
                 quadricipiti:"Gambe",femorali:"Gambe",glutei:"Gambe",polpacci:"Gambe",dorso:"Schiena"};
-/* Figura del corpo, schematica non anatomica (stesso stile a linee delle
-   icone esercizio in data/figures.js): ogni zona porta un data-d che combacia
-   con le chiavi di genCfg.dist, cosi' la stessa logica di toggle/ricarico che
-   gia' colora i chip colora anche il disegno. "Schiena" appare come i due
-   dorsali che sporgono ai lati del busto, l'unico modo di renderla leggibile
-   in una figura di sola fronte. */
+/* Figura del corpo fronte+retro, in stile muscle-map (silhouette a due viste
+   affiancate, come nelle app di misurazione BIA): ogni zona porta un data-d
+   che combacia con le chiavi di genCfg.dist, cosi' la stessa logica di
+   toggle/ricarico che gia' colora i chip colora anche il disegno. Con due
+   viste "Schiena" ha finalmente una sagoma propria (i dorsali visti da
+   dietro) invece di dover sporgere ai lati del busto frontale. Braccia e
+   Gambe compaiono su entrambe le viste (bicipiti/quadricipiti davanti,
+   tricipiti/femorali-glutei dietro) e condividono lo stesso data-d: si
+   toccano e colorano insieme. */
 function muscleMapSVG(){
   const z=(d,shape)=>`<${shape[0]} class="gdist${genCfg.dist[d]?" on":""}" data-d="${d}" ${shape[1]}/>`;
-  return `<svg viewBox="0 0 140 224" aria-hidden="true">
-    <circle class="mdecor" cx="70" cy="18" r="13"/>
-    <rect class="mdecor" x="64" y="29" width="12" height="13" rx="4"/>
-    ${z("spalle",["circle",'cx="34" cy="46" r="12"'])}
-    ${z("spalle",["circle",'cx="106" cy="46" r="12"'])}
-    ${z("schiena",["rect",'x="26" y="48" width="14" height="36" rx="7"'])}
-    ${z("schiena",["rect",'x="100" y="48" width="14" height="36" rx="7"'])}
-    ${z("petto",["rect",'x="44" y="44" width="52" height="28" rx="12"'])}
-    ${z("braccia",["rect",'x="8" y="52" width="16" height="68" rx="8"'])}
-    ${z("braccia",["rect",'x="116" y="52" width="16" height="68" rx="8"'])}
-    ${z("core",["rect",'x="52" y="72" width="36" height="32" rx="10"'])}
-    <rect class="mdecor" x="46" y="102" width="48" height="12" rx="6"/>
-    ${z("gambe",["rect",'x="50" y="112" width="16" height="100" rx="8"'])}
-    ${z("gambe",["rect",'x="74" y="112" width="16" height="100" rx="8"'])}
+  return `<svg viewBox="0 0 300 220" aria-hidden="true">
+    <text class="mlbl" x="70" y="216" text-anchor="middle">fronte</text>
+    <text class="mlbl" x="230" y="216" text-anchor="middle">retro</text>
+
+    <circle class="mdecor" cx="70" cy="16" r="12"/>
+    <rect class="mdecor" x="65" y="26" width="10" height="10" rx="3"/>
+    ${z("spalle",["circle",'cx="36" cy="42" r="10"'])}
+    ${z("spalle",["circle",'cx="104" cy="42" r="10"'])}
+    ${z("petto",["path",'d="M44,40 Q70,32 96,40 Q102,54 96,68 Q70,76 44,68 Q38,54 44,40 Z"'])}
+    ${z("braccia",["rect",'x="8" y="48" width="15" height="66" rx="7"'])}
+    ${z("braccia",["rect",'x="117" y="48" width="15" height="66" rx="7"'])}
+    ${z("core",["rect",'x="52" y="70" width="36" height="32" rx="9"'])}
+    <line class="mdecor" x1="70" y1="72" x2="70" y2="98"/>
+    <line class="mdecor" x1="58" y1="80" x2="82" y2="80"/>
+    <line class="mdecor" x1="58" y1="92" x2="82" y2="92"/>
+    <rect class="mdecor" x="46" y="100" width="48" height="12" rx="6"/>
+    ${z("gambe",["rect",'x="50" y="110" width="17" height="96" rx="8"'])}
+    ${z("gambe",["rect",'x="73" y="110" width="17" height="96" rx="8"'])}
+
+    <circle class="mdecor" cx="230" cy="16" r="12"/>
+    <rect class="mdecor" x="225" y="26" width="10" height="10" rx="3"/>
+    ${z("schiena",["path",'d="M196,42 Q180,46 176,64 Q174,82 184,98 Q194,106 206,100 Q212,84 210,66 Q208,50 196,42 Z"'])}
+    ${z("schiena",["path",'d="M264,42 Q280,46 284,64 Q286,82 276,98 Q266,106 254,100 Q248,84 250,66 Q252,50 264,42 Z"'])}
+    <line class="mdecor" x1="230" y1="46" x2="230" y2="98"/>
+    ${z("braccia",["rect",'x="168" y="48" width="15" height="66" rx="7"'])}
+    ${z("braccia",["rect",'x="277" y="48" width="15" height="66" rx="7"'])}
+    <rect class="mdecor" x="206" y="100" width="48" height="12" rx="6"/>
+    ${z("gambe",["rect",'x="210" y="110" width="17" height="96" rx="8"'])}
+    ${z("gambe",["rect",'x="233" y="110" width="17" height="96" rx="8"'])}
   </svg>`;
 }
 function paintRandomWarn(){

@@ -144,12 +144,14 @@
   .tools button{flex:1;min-width:120px;background:transparent;border:1px solid var(--line);border-radius:var(--r);padding:11px;font-family:inherit;font-size:13px;color:var(--soft);cursor:pointer}
   .tools button.danger:active{border-color:var(--hot);color:var(--hot)}
 
-  /* mappa muscolare del tab Random: figura schematica, non anatomica, negli
-     stessi toni delle icone esercizio esistenti. Le zone condividono classe e
-     data-d coi chip testuali sottostanti, cosi' un solo handler li aggiorna entrambi. */
+  /* mappa muscolare del tab Random: silhouette fronte+retro in stile
+     muscle-map, negli stessi toni delle icone esercizio esistenti. Le zone
+     condividono classe e data-d coi chip testuali sottostanti, cosi' un
+     solo handler li aggiorna entrambi. */
   .mmap{display:flex;justify-content:center;margin:2px 0 14px}
-  .mmap svg{width:132px;height:auto;filter:drop-shadow(0 6px 14px rgba(0,0,0,.35))}
+  .mmap svg{width:100%;max-width:300px;height:auto;filter:drop-shadow(0 6px 14px rgba(0,0,0,.35))}
   .mmap .mdecor{fill:rgba(255,255,255,.06);stroke:rgba(255,255,255,.22);stroke-width:1.5}
+  .mmap .mlbl{fill:var(--soft);stroke:none;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase}
   .mmap .gdist{fill:rgba(255,255,255,.08);stroke:rgba(255,255,255,.5);stroke-width:2;cursor:pointer;
     transition:fill .15s ease,stroke .15s ease,opacity .15s ease}
   .mmap .gdist:active{fill:rgba(255,255,255,.2)}

@@ -129,7 +129,7 @@
   .noteflag .nf.on{border-color:var(--acc);color:var(--acc);background:var(--accSoft)}
   .fab{position:fixed;right:14px;bottom:calc(96px + env(safe-area-inset-bottom));z-index:1000;
     width:52px;height:52px;border-radius:50%;border:1px solid var(--accLine);background:var(--acc);
-    color:#0C0F14;font-size:22px;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center}
+    color:#0C0F14;font-size:22px;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.45);display:none;align-items:center;justify-content:center}
   .fab.on{display:flex}
   .askai{width:100%;background:var(--card2);border:1px solid var(--accLine);color:var(--acc);
     border-radius:var(--r);padding:11px;font-family:inherit;font-size:13px;cursor:pointer;margin-bottom:10px;text-align:left}
