@@ -15,7 +15,7 @@ const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="26.5";
+const APP_VERSION="26.6";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
@@ -1664,9 +1664,30 @@ function coachCtx(){
       " kg, lento avanti "+r.ohp+" kg, cerniera "+r.hinge+" kg.");
   }catch(e){}
   if(S.days&&S.days.length)L.push("SCHEDA GIA' IN USO NELL'APP: "+S.days.map(d=>"giorno "+d.id+" ("+(d.focus||"")+")").join(", ")+".");
+  L.push(coachProgressSummary());
   const ult=(S.log||[]).slice(-3).map(s=>s.date+" giorno "+s.d+" — "+(s.ex||[]).map(e=>e.n).join(", ")).join("\n");
   if(ult)L.push("ULTIME SEDUTE REGISTRATE:\n"+ult);
   return L.join("\n");
+}
+
+/* aderenza reale: quante sedute negli ultimi 7/30 giorni e come si muove il
+   tonnellaggio settimana su settimana, dagli stessi log che alimentano il
+   grafico del tab Log. Cosi' il coach, riaprendo la chat dopo giorni, non
+   ripete domande gia' risposte ma commenta quello che e' successo davvero. */
+function coachProgressSummary(){
+  const DAY=864e5,now=Date.now();
+  const logs=(S.log||[]).map(s=>({...s,ts:s.iso?new Date(s.iso).getTime():0})).filter(s=>s.ts);
+  const last7=logs.filter(s=>now-s.ts<=7*DAY);
+  const prev7=logs.filter(s=>now-s.ts>7*DAY&&now-s.ts<=14*DAY);
+  const last30=logs.filter(s=>now-s.ts<=30*DAY);
+  const vol7=Math.round(last7.reduce((a,s)=>a+(s.vol||0),0));
+  const volPrev7=Math.round(prev7.reduce((a,s)=>a+(s.vol||0),0));
+  const L=["ADERENZA REALE — sedute registrate ultimi 7 giorni: "+last7.length+" (tonnellaggio "+vol7+" kg); "+
+    "settimana precedente: "+prev7.length+" sedute ("+volPrev7+" kg)"+
+    (volPrev7>0?", variazione "+(vol7>=volPrev7?"+":"")+Math.round((vol7-volPrev7)/volPrev7*100)+"%":"")+
+    "; ultimi 30 giorni: "+last30.length+" sedute."];
+  if(logs.length&&!last7.length)L.push("Nessuna seduta registrata negli ultimi 7 giorni: se e' un calo vero, chiediglielo direttamente prima di dare consigli.");
+  return L.join(" ");
 }
 
 function buildCoachPrompt(userText){
@@ -1735,12 +1756,32 @@ function drawCoachPlanBox(el,days){
   const stats=cycleStats(days);
   el.innerHTML=`<div class="nextbox" style="margin-top:10px">
     <b>Proposta pronta</b> — ${stats.giorni} giorni, ${stats.esercizi} esercizi, ${stats.serie} serie.
+    <button class="genbtn" id="cch_activate" style="width:100%;margin:8px 0 0">Metti in servizio ora</button>
     <div style="display:flex;gap:8px;margin-top:8px">
-      <button class="genbtn" id="cch_save" style="flex:1;margin:0">Salva nell'archivio</button>
+      <button class="revert" id="cch_save" style="flex:1;width:auto;margin:0">Salva soltanto</button>
       <button class="revert" id="cch_discard" style="flex:none;width:auto;margin:0">Scarta</button>
     </div></div>`;
+  el.querySelector("#cch_activate").onclick=()=>activateCoachPlan(days);
   el.querySelector("#cch_save").onclick=()=>saveCoachPlan(days);
   el.querySelector("#cch_discard").onclick=()=>{S.coach.plan=null;save();render()};
+}
+
+/* attiva subito la proposta: stesso schema sicuro di useCycle (archivia
+   prima quella in uso, se c'e' qualcosa da perdere), ma senza uscire dalla
+   conversazione — il coach resta li' per seguirti quando torni a raccontargli
+   come sta andando. */
+async function activateCoachPlan(days){
+  const cur=cycleStats(S.days||[]);
+  if(cur.esercizi){
+    const salva=await ask(`Prima archivio la scheda che stai usando?<br><small style="color:var(--soft)">${cur.giorni} giorni, ${cur.esercizi} esercizi. Cosi' puoi tornarci quando vuoi.</small>`,"Archivia");
+    if(salva)archiveCurrent("");
+  }
+  S.days=structuredClone(days);
+  S.days.forEach(d=>(d.ex||[]).forEach(e=>(e.sets||[]).forEach(s=>{s.done=false;s.r=""})));
+  S.coach.plan=null;
+  S.coach.msgs.push({r:"a",t:"Fatto — è la tua scheda attiva adesso. Trovi i giorni A/B/C qui sopra: si comincia da li'. Quando l'avrai allenata un po' torna a raccontarmi come sta andando.",p:null});
+  save();render();updateBarInfo();
+  toast("Scheda attivata");
 }
 
 function saveCoachPlan(days){
@@ -1751,7 +1792,7 @@ function saveCoachPlan(days){
   if(!S.saved)S.saved=[];
   S.saved.push(c);
   S.coach.plan=null;
-  S.coach.msgs.push({r:"a",t:"Fatto — l'ho salvata nell'archivio come \""+name+"\". La trovi in Impostazioni → Le mie schede, la metti in servizio quando vuoi: da li' in poi funziona anche senza internet.",p:null});
+  S.coach.msgs.push({r:"a",t:"Fatto — l'ho salvata come \""+name+"\" senza attivarla. La trovi quando vuoi in Impostazioni → Le mie schede, oppure chiedimi di riproporla.",p:null});
   save();render();
   toast("Scheda salvata nell'archivio");
 }
