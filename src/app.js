@@ -15,7 +15,7 @@ const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="26.4";
+const APP_VERSION="26.5";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
@@ -1611,7 +1611,7 @@ function drawCoachChat(){
   const head=document.createElement("div");head.className="card";
   head.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
     <div><h4 style="margin-bottom:2px">${esc(info[1])}</h4><div class="sub" style="margin:0">${esc(info[2])}</div></div>
-    <button class="revert" id="cch_change" style="flex:none;padding:8px 12px">Cambia</button></div>`;
+    <button class="revert" id="cch_change" style="flex:none;width:auto;padding:8px 12px;margin:0">Cambia</button></div>`;
   main.appendChild(head);
   head.querySelector("#cch_change").onclick=async()=>{
     if(coachBusy)return;
@@ -1736,8 +1736,8 @@ function drawCoachPlanBox(el,days){
   el.innerHTML=`<div class="nextbox" style="margin-top:10px">
     <b>Proposta pronta</b> — ${stats.giorni} giorni, ${stats.esercizi} esercizi, ${stats.serie} serie.
     <div style="display:flex;gap:8px;margin-top:8px">
-      <button class="genbtn" id="cch_save" style="flex:1">Salva nell'archivio</button>
-      <button class="revert" id="cch_discard" style="flex:none">Scarta</button>
+      <button class="genbtn" id="cch_save" style="flex:1;margin:0">Salva nell'archivio</button>
+      <button class="revert" id="cch_discard" style="flex:none;width:auto;margin:0">Scarta</button>
     </div></div>`;
   el.querySelector("#cch_save").onclick=()=>saveCoachPlan(days);
   el.querySelector("#cch_discard").onclick=()=>{S.coach.plan=null;save();render()};
