@@ -15,7 +15,7 @@ const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="26.8";
+const APP_VERSION="26.9";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
@@ -1687,9 +1687,13 @@ function drawCoachChat(){
   main.appendChild(head);
   head.querySelector("#cch_change").onclick=async()=>{
     if(coachBusy)return;
-    if((S.coach.msgs||[]).length && !await ask("Cambio modalità?<br><small style='color:var(--soft)'>La conversazione attuale si perde. Una scheda gia' salvata resta nell'archivio.</small>","Cambia"))return;
+    const perde=(S.coach.msgs||[]).length||S.coach.days;
+    if(perde && !await ask("Cambio modalità?<br><small style='color:var(--soft)'>Conversazione e scheda del coach si perdono. Una scheda archiviata resta nell'archivio.</small>","Cambia"))return;
     S.coach={mode:null,msgs:[],plan:null};save();render();
   };
+
+  // la scheda accettata vive qui, sopra la chat: si allena nel Coach
+  try{drawCoachScheda()}catch(e){}
 
   const box=document.createElement("div");box.className="card";
   box.innerHTML=`<div class="cchmsgs" id="cch_msgs"></div>
@@ -1736,6 +1740,17 @@ function coachCtx(){
       " kg, lento avanti "+r.ohp+" kg, cerniera "+r.hinge+" kg.");
   }catch(e){}
   if(S.days&&S.days.length)L.push("SCHEDA GIA' IN USO NELL'APP: "+S.days.map(d=>"giorno "+d.id+" ("+(d.focus||"")+")").join(", ")+".");
+  if(S.coach&&S.coach.days&&S.coach.days.length){
+    L.push("LA TUA SCHEDA (quella che hai proposto tu, in uso nel tab Coach):");
+    S.coach.days.forEach(d=>{
+      const fatte=(d.ex||[]).reduce((a,e)=>a+(e.sets||[]).filter(s=>s.done).length,0);
+      const tot=(d.ex||[]).reduce((a,e)=>a+(e.sets||[]).length,0);
+      L.push("- giorno "+d.id+" ("+(d.focus||"")+"): "+(d.ex||[]).map(e=>e.n).join(", ")+
+        (fatte?"  [oggi: "+fatte+"/"+tot+" serie fatte]":""));
+    });
+    const kLog=(S.log||[]).filter(s=>s.d==="K").slice(-3);
+    if(kLog.length)L.push("SEDUTE GIA' FATTE CON LA TUA SCHEDA: "+kLog.map(s=>s.date+" ("+(s.vol||0)+" kg)").join(", ")+".");
+  }
   L.push(coachProgressSummary());
   const ult=(S.log||[]).slice(-3).map(s=>s.date+" giorno "+s.d+" — "+(s.ex||[]).map(e=>e.n).join(", ")).join("\n");
   if(ult)L.push("ULTIME SEDUTE REGISTRATE:\n"+ult);
@@ -1836,14 +1851,85 @@ function drawCoachPlanBox(el,days){
         </ul>
       </div>`).join("")}
     </div>
-    <button class="genbtn" id="cch_activate" style="width:100%;margin:8px 0 0">Metti in servizio ora</button>
+    <button class="genbtn" id="cch_usehere" style="width:100%;margin:8px 0 0">Allenala qui nel Coach</button>
     <div style="display:flex;gap:8px;margin-top:8px">
-      <button class="revert" id="cch_save" style="flex:1;width:auto;margin:0">Salva soltanto</button>
+      <button class="revert" id="cch_activate" style="flex:1;width:auto;margin:0">Sostituisci la mia A/B/C</button>
       <button class="revert" id="cch_discard" style="flex:none;width:auto;margin:0">Scarta</button>
     </div></div>`;
+  el.querySelector("#cch_usehere").onclick=()=>coachUsePlanHere(days);
   el.querySelector("#cch_activate").onclick=()=>activateCoachPlan(days);
-  el.querySelector("#cch_save").onclick=()=>saveCoachPlan(days);
   el.querySelector("#cch_discard").onclick=()=>{S.coach.plan=null;save();render()};
+}
+
+/* la scheda resta DENTRO il tab Coach, allenabile sul posto come la scheda
+   al volo del Random: i giorni A/B/C dell'app non vengono toccati. */
+function coachUsePlanHere(days){
+  S.coach.days=structuredClone(days);
+  S.coach.days.forEach(d=>(d.ex||[]).forEach(e=>(e.sets||[]).forEach(s=>{s.done=false;s.r=""})));
+  S.coach.cur=0;
+  S.coach.plan=null;
+  S.coach.msgs.push({r:"a",t:"Perfetto — la scheda e' qui sopra, pronta: spunta le serie come negli altri giorni e registra la seduta a fine allenamento. Io resto qui sotto per qualsiasi dubbio mentre ti alleni.",p:null});
+  save();render();updateBarInfo();
+  toast("Scheda del coach pronta qui");
+}
+
+function drawCoachScheda(){
+  const days=S.coach.days;if(!days||!days.length)return;
+  if(S.coach.cur==null||S.coach.cur>=days.length)S.coach.cur=0;
+  const cur=days[S.coach.cur];
+
+  const box=document.createElement("div");box.className="card";
+  box.innerHTML=`<h4>La scheda del coach</h4>
+    <div class="chips" id="kdays">${days.map((d,i)=>`<button class="chip${i===S.coach.cur?" on":""}" data-i="${i}">Giorno ${esc(d.id)}</button>`).join("")}</div>
+    <div class="sub" style="margin:0 0 4px">${esc(cur.focus||"")}</div>`;
+  main.appendChild(box);
+  box.querySelectorAll("#kdays .chip").forEach(b=>b.onclick=()=>{
+    S.coach.cur=+b.dataset.i;save();render();updateBarInfo();
+  });
+
+  // stesso motore di card degli altri giorni: serie, timer, RIR, note.
+  // id sintetico "K<giorno>": non collide con la scheda A/B/C vera, cosi'
+  // suggerimenti di carico e verdetti restano separati.
+  const dK={id:"K"+(cur.id||S.coach.cur),focus:cur.focus,warm:cur.warm||[],ex:cur.ex||[]};
+  const warmHost=document.createElement("div");warmHost.className="warmpanel";
+  main.appendChild(warmHost);
+  try{mountWarmPanel(warmHost,dK)}catch(e){}
+  drawExList(main,dK);
+
+  const reg=document.createElement("button");
+  reg.className="genbtn";reg.style.marginTop="10px";reg.textContent="Registra questa seduta";
+  reg.onclick=()=>{
+    let vol=0;
+    const ex=(cur.ex||[]).map(e=>{const done=e.sets.filter(s=>s.done);const use=done.length?done:e.sets;
+      use.forEach(s=>{vol+=s.w*(parseInt(s.r)||0)});
+      return {n:e.n,sets:use.map(s=>`${fmt(s.w)}×${s.r||"–"}${s.rir!=null?"@"+s.rir:""}`).join("  ")};});
+    const min=sessStart?Math.max(1,sessMinutes()):null;
+    S.log.push({d:"K",iso:new Date().toISOString(),date:new Date().toLocaleDateString("it-IT",{day:"2-digit",month:"short",year:"2-digit"}),ex,vol:Math.round(vol),min});
+    (cur.ex||[]).forEach(e=>e.sets.forEach(s=>s.done=false));
+    sessStart=0;store.set("sess_start","0");save();render();
+    toast(`Seduta col coach salvata · ${Math.round(vol)} kg`);
+    updateBarInfo();
+  };
+  main.appendChild(reg);
+
+  main.insertAdjacentHTML("beforeend",`<div class="tools" style="margin-top:8px">
+    <button id="kpromote">Sostituisci la mia A/B/C</button>
+    <button id="karch">★ Archivia</button>
+    <button id="kdel" class="danger">Rimuovi dal Coach</button>
+  </div>`);
+  document.getElementById("kpromote").onclick=()=>activateCoachPlan(days);
+  document.getElementById("karch").onclick=()=>{
+    const info=coachModeInfo();
+    const name="Coach · "+info[1]+" — "+new Date().toLocaleDateString("it-IT",{day:"2-digit",month:"short",year:"2-digit"});
+    if(!S.saved)S.saved=[];
+    S.saved.push({id:"c"+Date.now().toString(36),kind:"ciclo",ts:Date.now(),name:name,
+      goal:(S.profile&&S.profile.goal)||"",stats:cycleStats(days),days:structuredClone(days)});
+    save();toast("Copiata nell'archivio schede");
+  };
+  document.getElementById("kdel").onclick=async()=>{
+    if(!await ask("Tolgo la scheda dal Coach?<br><small style='color:var(--soft)'>Le sedute gia' registrate restano nello storico.</small>","Rimuovi"))return;
+    S.coach.days=null;save();render();updateBarInfo();
+  };
 }
 
 /* attiva subito la proposta: stesso schema sicuro di useCycle (archivia
@@ -1859,6 +1945,7 @@ async function activateCoachPlan(days){
   S.days=structuredClone(days);
   S.days.forEach(d=>(d.ex||[]).forEach(e=>(e.sets||[]).forEach(s=>{s.done=false;s.r=""})));
   S.coach.plan=null;
+  S.coach.days=null;   // promossa a scheda principale: niente doppioni nel Coach
   S.coach.msgs.push({r:"a",t:"Fatto — è la tua scheda attiva adesso: ti ho portato sul primo giorno, si comincia da li'. Quando l'avrai allenata un po' torna a raccontarmi come sta andando.",p:null});
   /* portiamo l'atleta direttamente sul primo giorno della nuova scheda:
      "metti in servizio" deve significare potersi allenare subito, non
@@ -1888,7 +1975,7 @@ function volChart(){
   const W=680,H=130,P={l:8,r:8,t:14,b:22};
   const mx=Math.max(...data.map(s=>s.vol||0))||1;
   const bw=(W-P.l-P.r)/data.length;
-  const col={A:"#FF6B2C",B:"#38CFFF",C:"#B78BFF",R:"#FF4D8D"};
+  const col={A:"#FF6B2C",B:"#38CFFF",C:"#B78BFF",R:"#FF4D8D",K:"#2DD4BF"};
   const bars=data.map((s,i)=>{
     const h=Math.max(3,(H-P.t-P.b)*(s.vol||0)/mx);
     const x=P.l+i*bw+bw*0.15;
@@ -2922,6 +3009,7 @@ function sessMinutes(){return sessStart?Math.floor((Date.now()-sessStart)/60000)
 function updateBarInfo(){
   let d=S.days.find(x=>x.id===view);
   if(view==="RANDOM"&&S.rnd)d={ex:S.rnd.ex};
+  if(view==="COACH"&&S.coach&&S.coach.days)d={ex:(S.coach.days[S.coach.cur||0]||{}).ex||[]};
   let done=0,tot=0;
   if(d)d.ex.forEach(e=>e.sets.forEach(s=>{tot++;if(s.done)done++}));
   if(sclock){
