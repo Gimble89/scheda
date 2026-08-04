@@ -15,7 +15,7 @@ const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="26.9";
+const APP_VERSION="27.1";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
@@ -26,7 +26,7 @@ function migrate(st){
   try{
     st._snap={v:from,ts:Date.now(),
       data:JSON.stringify({days:st.days,log:st.log,body:st.body,profile:st.profile})};
-  }catch(e){}
+  }catch(e){console.error("Snapshot pre-migrazione non riuscito:",e)}
   if(from<2){
     // l'onboarding era segnato sul dispositivo: ora appartiene al profilo
     if(st.onbDone===undefined)
@@ -38,11 +38,70 @@ function migrate(st){
   return st;
 }
 
+/* Lo spazio di localStorage e' finito (~5 MB): quando si riempie, setItem
+   lancia. Il ripiego su una variabile in memoria tiene in piedi la sessione
+   corrente, ma al ricaricamento quei dati sono persi. Prima non lo diceva
+   nessuno: l'app sembrava salvare e invece buttava via tutto.
+   Ora il fallimento e' rumoroso e si tenta un recupero automatico. */
+let STORAGE_KO=false;
 const store={
-  get:k=>{try{return localStorage.getItem(k)}catch(e){return mem[k]??null}},
-  set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){mem[k]=v}},
-  del:k=>{try{localStorage.removeItem(k)}catch(e){delete mem[k]}}
+  get:k=>{try{return localStorage.getItem(k)}catch(e){console.warn("storage.get",k,e);return mem[k]??null}},
+  set:(k,v)=>{
+    try{localStorage.setItem(k,v);return true}
+    catch(e){
+      mem[k]=v;
+      console.error("Scrittura su localStorage fallita per",k,e);
+      if(!STORAGE_KO){
+        STORAGE_KO=true;
+        // un solo tentativo di recupero: pota lo storico e riprova
+        const recuperato=potaturaEmergenza();
+        try{
+          localStorage.setItem(k,v);
+          STORAGE_KO=false;
+          if(recuperato)toast("Spazio esaurito: ho archiviato le sedute piu' vecchie");
+          return true;
+        }catch(e2){
+          avvisoStorage();
+        }
+      }
+      return false;
+    }
+  },
+  del:k=>{try{localStorage.removeItem(k)}catch(e){console.warn("storage.del",k,e);delete mem[k]}}
 };
+/* Potatura: le sedute oltre le 200 piu' recenti restano su Supabase ma escono
+   dalla copia locale. Non si perde nulla se hai fatto l'accesso; se sei solo
+   offline si perde lo storico piu' vecchio, ed e' il male minore rispetto a
+   perdere quello che stai scrivendo adesso. */
+function potaturaEmergenza(){
+  try{
+    if(typeof MU==="undefined"||!MU||!MU.users)return false;
+    let tagliato=false;
+    MU.users.forEach(u=>{
+      if(!u.state)return;
+      if(Array.isArray(u.state.log)&&u.state.log.length>200){u.state.log=u.state.log.slice(-200);tagliato=true}
+      if(Array.isArray(u.state.chat)&&u.state.chat.length>20){u.state.chat=u.state.chat.slice(-20);tagliato=true}
+      // le immagini incollate sono la causa piu' frequente: via le piu' pesanti
+      (u.state.days||[]).forEach(d=>(d.ex||[]).forEach(e=>{
+        if(e.img&&e.img.length>60000){e.img="";tagliato=true}
+      }));
+    });
+    return tagliato;
+  }catch(e){console.error("potatura fallita",e);return false}
+}
+function avvisoStorage(){
+  try{
+    toast("Memoria del browser piena: i dati non si stanno salvando");
+    console.error("localStorage saturo: i salvataggi restano solo in memoria e andranno persi al ricaricamento.");
+  }catch(e){}
+}
+/* potatura ordinaria, chiamata a ogni salvataggio: tiene la copia locale
+   entro limiti ragionevoli senza aspettare l'emergenza */
+const LOG_LOCALE_MAX=400;      // ~2 anni di allenamenti a 4 sedute a settimana
+function potaturaOrdinaria(st){
+  if(!st)return;
+  if(Array.isArray(st.log)&&st.log.length>LOG_LOCALE_MAX)st.log=st.log.slice(-LOG_LOCALE_MAX);
+}
 /* hook di sincronizzazione cloud: viene rimpiazzato dal modulo Supabase in fondo al file.
    Dichiarato qui perche' save() lo richiama e deve esistere anche offline. */
 let schedulePush=function(){};
@@ -70,6 +129,10 @@ function ask(msg,ok="Conferma"){
 
 /* Solo https e data:image. Un URL arbitrario in src fa da beacon: rivela il tuo
    IP a chi ha fornito la scheda ogni volta che apri l'app. */
+/* Un'immagine incollata a piena risoluzione occupa da sola meta' dello spazio
+   disponibile. 150 KB di base64 bastano per una figura o una GIF piccola. */
+const IMG_MAX=150000;
+function imgTroppoGrande(src){return typeof src==="string"&&src.startsWith("data:")&&src.length>IMG_MAX}
 function safeImg(u){
   const v=String(u||"").trim();
   return /^(https:\/\/|data:image\/(png|jpe?g|gif|webp);base64,)/i.test(v)?v:"";
@@ -108,11 +171,23 @@ const ALT={
    poteva lasciare l'app in uno stato incoerente. normState() ripara, ma ripara
    dopo: questo controllo rifiuta prima. */
 const MAX_DAYS=12, MAX_EX=40, MAX_SETS=20, MAX_TXT=120;
-function cleanTxt(v,max){return String(v??"").slice(0,max||MAX_TXT)}
+/* Testo che arriva da un file esterno. L'escaping avviene comunque in uscita
+   con esc(), ma qui si tolgono anche in ingresso i caratteri che servono a
+   costruire tag: e' difesa in profondita', costa nulla, e copre il caso in cui
+   un giorno qualcuno dimentichi un esc() su un campo importato. */
+function cleanTxt(v,max){
+  return String(v??"")
+    .replace(/[<>]/g,"")
+    .replace(/[\u0000-\u001F\u007F]/g,"")   // caratteri di controllo
+    .slice(0,max||MAX_TXT)
+    .trim();
+}
 function cleanNum(v,min,max,dflt){
   const n=parseFloat(String(v).replace(",","."));
   return Number.isFinite(n)&&n>=min&&n<=max?n:dflt;
 }
+/* in importazione le immagini enormi vengono scartate: un backup altrui con
+   foto a piena risoluzione riempirebbe lo spazio al primo salvataggio */
 function validateDays(days){
   if(!Array.isArray(days)||!days.length)return{ok:false,err:"nessun giorno nel file"};
   if(days.length>MAX_DAYS)return{ok:false,err:`troppi giorni (${days.length}, massimo ${MAX_DAYS})`};
@@ -139,7 +214,7 @@ function validateDays(days){
           r:cleanTxt(e&&e.r,12)||"8",
           sets:Array.from({length:nSet},()=>({w,r:"",done:false,rir:null})),
           note:cleanTxt(e&&e.note,200), tag:cleanTxt(e&&e.tag,12),
-          ss:e&&e.ss?1:0
+          ss:e&&e.ss?1:0, tempo:e&&e.tempo===true?true:undefined
         };
       })
     });
@@ -205,7 +280,7 @@ function loadMU(){
   // forza il seed corretto una volta sola (ripara installazioni con dati vuoti salvati prima)
   const SEED="salv-v11";
   let mu=null;
-  try{mu=JSON.parse(store.get("scheda_mu"))}catch(e){}
+  try{mu=JSON.parse(store.get("scheda_mu"))}catch(e){console.error("Dati locali illeggibili (scheda_mu):",e)}
   const seeded=store.get("seed_done")===SEED;
   if(mu&&mu.users&&mu.users.length){
     // se lo stato salvato ha giorni vuoti E non è ancora stato riparato, sostituiscilo
@@ -216,7 +291,7 @@ function loadMU(){
   }
   // migrazione dal profilo singolo esistente
   let old=null;
-  try{old=JSON.parse(store.get("scheda_v3"))}catch(e){}
+  try{old=JSON.parse(store.get("scheda_v3"))}catch(e){console.warn("Vecchio formato non leggibile (scheda_v3):",e)}
   store.set("seed_done",SEED);
   if(old){const st=normState(old);const nome=(st.profile&&st.profile.nome)||"Salvatore";
     return {active:"u1",users:[{id:"u1",name:nome,state:st}]};}
@@ -227,7 +302,14 @@ const firstRun=false;
 function activeUser(){return MU.users.find(u=>u.id===MU.active)||MU.users[0]}
 let S=normState(activeUser().state);
 let view=store.get("scheda_view")||"A";
-const save=()=>{activeUser().state=S;store.set("scheda_mu",JSON.stringify(MU));store.set("scheda_ts",String(Date.now()));schedulePush()};
+const save=()=>{
+  activeUser().state=S;
+  potaturaOrdinaria(S);
+  const ok=store.set("scheda_mu",JSON.stringify(MU));
+  store.set("scheda_ts",String(Date.now()));
+  schedulePush();
+  return ok;
+};
 function switchUser(id){
   save();MU.active=id;store.set("scheda_mu",JSON.stringify(MU));
   S=normState(activeUser().state);view="A";store.set("scheda_view","A");
@@ -261,6 +343,24 @@ const main=document.getElementById("main"), nav=document.getElementById("nav"), 
    riportata a un carico-equivalente per 8 rip. Più dati registri, più la stima
    è precisa: i campioni recenti pesano di più, e la confidenza cresce col numero
    di osservazioni. */
+/* Punto di partenza quando non ci sono ancora dati misurati. I valori fissi
+   di prima erano tarati su un atleta di 77 kg: per chi ne pesa 55 o 110
+   erano fuori scala e ogni stima nasceva sbagliata.
+   Ora si scalano sul peso corporeo e sull'esperienza dichiarata, con multipli
+   prudenti (per ~8 ripetizioni, non massimali). */
+const BASE_REFS={squat:1.0,bench:0.75,row:0.75,ohp:0.42,hinge:1.0};   // multipli del peso
+const LIV_FATTORE={p:0.72,i:1.0,a:1.25};                              // principiante / intermedio / avanzato
+function refsIniziali(){
+  const peso=(S&&S.profile&&parseFloat(S.profile.peso))||77;
+  const liv=LIV_FATTORE[(S&&S.profile&&S.profile.level)]||LIV_FATTORE.i;
+  const o={};
+  Object.keys(BASE_REFS).forEach(k=>{
+    o[k]=Math.max(10,Math.round(peso*BASE_REFS[k]*liv/2.5)*2.5);
+  });
+  return o;
+}
+/* compatibilita': resta un oggetto, ma i valori vengono ricalcolati quando
+   il profilo cambia. Chi lo legge come costante trova comunque numeri sensati. */
 const FALLBACK_REFS={squat:77,bench:58,row:58,ohp:32,hinge:77};
 const REPS_REF=8; // ripetizioni di riferimento per i "refs"
 // Epley con RIR: se avevi X ripetizioni di riserva, la capacità reale equivale a (reps+RIR) rip.
@@ -321,11 +421,15 @@ function wmean(samples){
 }
 function currentRefs(){
   const acc=refSamples();
-  const fb=(S.profile&&S.profile.refs)||FALLBACK_REFS;
+  /* ordine di preferenza: quello che hai davvero sollevato, poi i riferimenti
+     salvati nel profilo, poi una stima dal tuo peso corporeo. Il fisso finale
+     serve solo se manca perfino il peso. */
+  const stima=refsIniziali();
+  const fb=(S.profile&&S.profile.refs)||stima;
   const out={};
   Object.keys(FALLBACK_REFS).forEach(r=>{
     const m=acc[r]&&acc[r].length?wmean(acc[r]):null;
-    out[r]=m!=null?Math.round(m*10)/10:(fb[r]||FALLBACK_REFS[r]);
+    out[r]=m!=null?Math.round(m*10)/10:(fb[r]||stima[r]||FALLBACK_REFS[r]);
   });
   return out;
 }
@@ -392,16 +496,42 @@ function notify(title,body){
   }catch(e){}
 }
 
+/* ---------------- esercizi a tempo ----------------
+   Un esercizio "a tempo" (plank, hollow hold, isometrie, farmer walk) si misura
+   in secondi, non in ripetizioni. Il flag e' esplicito sull'esercizio: dedurlo
+   dalla stringa delle ripetizioni era fragile, perche' "40 sec" e "40" sono la
+   stessa cosa per chi scrive di fretta.
+   Conseguenze: l'etichetta diventa "sec", il tonnellaggio esclude l'esercizio
+   (peso x secondi non e' un volume), e il suggerimento di sovraccarico tace. */
+function isTempo(e){
+  if(!e)return false;
+  if(e.tempo===true)return true;
+  if(e.tempo===false)return false;
+  return /sec|"|'|min/i.test(String(e.r||""));   // ricononoscimento di ripiego
+}
+const unitOf=e=>isTempo(e)?"sec":"rip";
+/* secondi previsti da una stringa tipo "40 sec", "30-45 sec", "1 min" */
+function tempoSec(r){
+  const t=String(r||"");
+  const min=t.match(/(\d+)\s*min/i);
+  if(min)return parseInt(min[1])*60;
+  const rng=t.match(/(\d+)\s*-\s*(\d+)/);
+  if(rng)return parseInt(rng[2]);
+  const one=t.match(/(\d+)/);
+  return one?parseInt(one[1]):0;
+}
+
 /* ---------------- progressive overload ---------------- */
 function topReps(r){
   r=String(r||"");
-  if(/sec|\+/.test(r))return null;
+  if(/sec|min|\+|"|'/.test(r))return null;
   const m=r.match(/(\d+)\s*-\s*(\d+)/);
   if(m)return parseInt(m[2]);
   const s=r.match(/^(\d+)$/);
   return s?parseInt(s[1]):null;
 }
 function overloadHint(dayId,e){
+  if(isTempo(e))return false;          // a tempo: il sovraccarico non si misura in ripetizioni
   const t=topReps(e.r); if(!t)return false;
   for(let i=S.log.length-1;i>=0;i--){
     const s=S.log[i]; if(s.d!==dayId)continue;
@@ -421,6 +551,22 @@ function tonnellaggioTrendGiu(dayId){
   if(sess.length<3)return false;
   return sess[2].vol<sess[1].vol && sess[1].vol<=sess[0].vol; // due cali consecutivi
 }
+/* RIR medio delle ultime N sedute di un giorno. Sotto 1 significa che stai
+   arrivando al cedimento a ogni serie: e' fatica accumulata, e si vede prima
+   qui che nel tonnellaggio, che puo' restare identico mentre ti stai svuotando. */
+function rirMedio(dayId,quante){
+  const sess=S.log.filter(s=>s.d===dayId).slice(-(quante||3));
+  if(sess.length<(quante||3))return null;
+  const val=[];
+  sess.forEach(s=>(s.ex||[]).forEach(x=>{
+    String(x.sets).split(/\s+/).forEach(tok=>{
+      const at=tok.split("@");
+      if(at[1]!=null){const v=parseFloat(at[1]);if(!isNaN(v))val.push(v)}
+    });
+  }));
+  if(val.length<6)return null;                  // troppi pochi dati per fidarsi
+  return val.reduce((a,b)=>a+b,0)/val.length;
+}
 function deloadHint(dayId){
   const sess=S.log.filter(s=>s.d===dayId);
   if(sess.length<4)return null;
@@ -429,9 +575,12 @@ function deloadHint(dayId){
   for(let i=S.log.length-1;i>=0;i--){if(S.log[i].deload){lastDeIdx=i;break}}
   const since=lastDeIdx>=0?S.log.slice(lastDeIdx+1).filter(s=>s.d===dayId).length:sess.length;
   const trendGiu=tonnellaggioTrendGiu(dayId);
-  if(since>=6 || (since>=4 && trendGiu)){
-    return {since, trendGiu};
-  }
+  const rir=rirMedio(dayId,3);
+  const rirBasso=rir!=null&&rir<1;              // tre sedute a ridosso del cedimento
+  /* il RIR basso da solo basta a chiedere lo scarico: il volume puo' reggere
+     mentre il sistema nervoso non regge piu' */
+  if(since>=3&&rirBasso)return {since,trendGiu,rir,motivo:"rir"};
+  if(since>=6||(since>=4&&trendGiu))return {since,trendGiu,rir,motivo:trendGiu?"volume":"tempo"};
   return null;
 }
 function applyDeload(dayId){
@@ -508,7 +657,11 @@ function exCard(e,i,d){
          <div class="fig">${media(e)}</div>
          <div class="ex-id">
            <span class="nmrow"><span class="nm">${e.n}</span>${badges}</span>
-           <span class="sw">${e.sets.length}×${e.r} · tecnica, video, alternative</span>
+           <span class="sw">${e.sets.length}×${e.r} ${unitOf(e)} · tecnica, video, alternative</span>
+         </div>
+         <div class="ord">
+           <button class="up" title="Sposta su">▲</button>
+           <button class="dn" title="Sposta giù">▼</button>
          </div>
          <button class="kill">×</button>
        </div>
@@ -524,6 +677,12 @@ function exCard(e,i,d){
        <button class="apply">Applica ${fmt(e.w)} kg a tutte le serie</button>
        <button class="addset">+ serie</button>
      </div>
+     ${isTempo(e)?`<div class="restrow">
+       <span class="lbl">Tenuta</span>
+       <input class="tin" inputmode="numeric" value="${tempoSec(e.r)||40}">
+       <span class="lbl">sec</span>
+       <button class="tgo">▶ Avvia tenuta</button>
+     </div>`:""}
      <div class="restrow">
        <span class="lbl">Pausa</span>
        <input class="rin" inputmode="numeric" value="${e.rest}">
@@ -537,6 +696,7 @@ function exCard(e,i,d){
   const setsBox=c.querySelector(".sets");
   const drawSets=()=>{
     setsBox.innerHTML="";
+    const tmp=isTempo(e);
     e.sets.forEach((s,j)=>{
       const row=document.createElement("div");
       row.className="set"+(s.done?" done":"");
@@ -544,8 +704,8 @@ function exCard(e,i,d){
         <span class="n">${j+1}</span>
         <span class="f"><input class="sw" inputmode="decimal" value="${fmt(s.w)}"></span>
         <span class="lbl">kg ×</span>
-        <span class="f"><input class="sr" inputmode="numeric" value="${s.r||""}" placeholder="${e.r}"></span>
-        <span class="lbl">rip</span>
+        <span class="f"><input class="sr" inputmode="numeric" value="${s.r||""}" placeholder="${tmp?tempoSec(e.r)||e.r:e.r}"></span>
+        <span class="lbl">${tmp?"sec":"rip"}</span>
         <span class="f rirwrap"><input class="srir" inputmode="numeric" value="${s.rir!=null?s.rir:""}" placeholder="RIR" title="Ripetizioni di riserva: quante ne avevi ancora"></span>
         <button class="tick">✓</button>`;
       row.querySelector(".sw").onchange=ev=>{s.w=parseFloat(ev.target.value.replace(",","."))||0;save();drawSets()};
@@ -555,7 +715,7 @@ function exCard(e,i,d){
         unlockAudio();
         // spuntando senza aver scritto le ripetizioni, usa quelle previste dalla scheda
         if(!s.done && (s.r===""||s.r==null)){
-          const sug=topReps(e.r)||parseInt(e.r)||0;
+          const sug=tmp?(tempoSec(e.r)||0):(topReps(e.r)||parseInt(e.r)||0);
           if(sug>0)s.r=String(sug);
         }
         s.done=!s.done;save();drawSets();updateBarInfo();
@@ -590,6 +750,38 @@ function exCard(e,i,d){
   c.querySelector(".apply").onclick=()=>{e.sets.forEach(s=>s.w=e.w);save();drawSets();toast("Carico applicato a tutte le serie")};
   c.querySelector(".addset").onclick=()=>{e.sets.push({w:e.w,r:"",done:false});save();render()};
   c.querySelector(".rin").onchange=ev=>{e.rest=parseInt(ev.target.value)||0;save()};
+  /* riordino con le frecce: piu' affidabile del trascinamento con il telefono
+     in mano e le dita sudate. Sposta anche il compagno di superserie, altrimenti
+     la coppia si spezzerebbe e la scheda perderebbe senso. */
+  const mossa=(dir)=>{
+    const list=d.ex, i0=list.indexOf(e);
+    if(i0<0)return;
+    // blocco da spostare: se in superserie, tutti i consecutivi con lo stesso ss
+    let a=i0,b=i0;
+    if(e.ss){ while(a>0&&list[a-1].ss===e.ss)a--; while(b<list.length-1&&list[b+1].ss===e.ss)b++; }
+    const blocco=list.slice(a,b+1);
+    if(dir<0){
+      if(a===0)return;
+      // il blocco sopra (anch'esso eventualmente una superserie)
+      let pb=a-1,pa=pb; const pss=list[pb].ss;
+      if(pss){ while(pa>0&&list[pa-1].ss===pss)pa--; }
+      const prima=list.slice(pa,pb+1);
+      list.splice(pa,blocco.length+prima.length,...blocco,...prima);
+    } else {
+      if(b===list.length-1)return;
+      let na=b+1,nb=na; const nss=list[na].ss;
+      if(nss){ while(nb<list.length-1&&list[nb+1].ss===nss)nb++; }
+      const dopo=list.slice(na,nb+1);
+      list.splice(a,blocco.length+dopo.length,...dopo,...blocco);
+    }
+    save();render();
+  };
+  c.querySelector(".up").onclick=ev=>{ev.preventDefault();ev.stopPropagation();mossa(-1)};
+  c.querySelector(".dn").onclick=ev=>{ev.preventDefault();ev.stopPropagation();mossa(1)};
+  const tin=c.querySelector(".tin"), tgo=c.querySelector(".tgo");
+  if(tin)tin.onchange=ev=>{const v=parseInt(ev.target.value)||0;if(v>0){e.r=v+" sec";save();render()}};
+  if(tgo)tgo.onclick=()=>{unlockAudio();startSessionIfNeeded();
+    startTimer(parseInt(tin.value)||tempoSec(e.r)||40,"TENUTA")};
   c.querySelector(".go").onclick=()=>{unlockAudio();startSessionIfNeeded();startTimer(parseInt(c.querySelector(".rin").value)||60)};
   const noteEl=c.querySelector(".note");
   const paintNoteFlag=()=>{
@@ -734,7 +926,11 @@ function render(){
   if(dl){
     const box=document.getElementById("deloadBox");
     box.innerHTML=`<div class="nextbox late" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <span style="flex:1;min-width:180px">Hai fatto <b>${dl.since} sedute</b> di questo giorno${dl.trendGiu?" e il tonnellaggio sta calando":""}. Consiglio una <b>settimana di scarico</b> (−40% volume, −10% carico) per recuperare e ripartire più forte.</span>
+      <span style="flex:1;min-width:180px">${
+        dl.motivo==="rir"
+          ? `Nelle ultime 3 sedute il <b>RIR medio è ${fmt(Math.round(dl.rir*10)/10)}</b>: stai chiudendo quasi ogni serie a ridosso del cedimento${dl.trendGiu?" e il tonnellaggio sta calando":""}. È fatica accumulata.`
+          : `Hai fatto <b>${dl.since} sedute</b> di questo giorno${dl.trendGiu?" e il tonnellaggio sta calando":""}.`
+      } Consiglio una <b>settimana di scarico</b> (−40% volume, −10% carico) per recuperare e ripartire più forte.</span>
       <button id="doDeload" style="border:0;background:var(--acc);color:#0C0F14;border-radius:8px;padding:9px 13px;font-family:'Anton',sans-serif;text-transform:uppercase;font-size:12px;cursor:pointer">Applica scarico</button></div>`;
     box.querySelector("#doDeload").onclick=async()=>{
       if(!await ask("Applico la settimana di scarico a <b>tutti gli esercizi</b> del giorno "+d.id+"?<br><small style='color:var(--soft)'>−1 serie e −10% carico. La prossima seduta registrata sarà marcata come scarico.</small>","Applica"))return;
@@ -838,14 +1034,26 @@ function predictBlock(e){
     const w=predictLoad(e.n,r,rir);
     return `<div class="predrow"><span>${r} rip · RIR ${rir}</span><b>${fmt(w)} kg</b></div>`;
   }).join("");
-  const a=analyzeRef(li.ref);
   let trendLine="";
+  /* prima l'andamento di QUESTO esercizio: e' quello che ti aspetti di vedere */
+  const ex1=analyzeExercise(e.n);
+  if(ex1.trend){
+    const arrow=ex1.trend==="progressione"?"▲":ex1.trend==="regressione"?"▼":"■";
+    const col=ex1.trend==="progressione"?"var(--ok)":ex1.trend==="regressione"?"#F87171":"#FFD166";
+    trendLine+=`<div class="predrow" style="border-top:1px dashed var(--line);margin-top:4px;padding-top:8px">
+      <span style="color:${col}">${arrow} ${ex1.trend} su questo esercizio</span>
+      <b style="color:${col}">${fmt(Math.round(ex1.prev))} → ${fmt(Math.round(ex1.current))} kg</b></div>`;
+    if(ex1.perche)trendLine+=`<div class="predrow" style="padding-top:2px">
+      <span style="color:var(--soft);font-size:12px">${esc(ex1.perche)}</span></div>`;
+  }
+  /* poi la famiglia di movimento, dichiarata come tale per non confondere */
+  const a=analyzeRef(li.ref);
   if(a.fit&&a.n>=3){
     const arrow=a.trend==="progressione"?"▲":a.trend==="regressione"?"▼":"■";
     const col=a.trend==="progressione"?"var(--ok)":a.trend==="regressione"?"#F87171":"#FFD166";
     const per=a.slope>=0?"+":"";
-    trendLine=`<div class="predrow" style="border-top:1px dashed var(--line);margin-top:4px;padding-top:8px">
-      <span style="color:${col}">${arrow} ${a.trend} · ${per}${fmt(Math.round(a.slope*10)/10)} kg/sett</span>
+    trendLine+=`<div class="predrow" style="border-top:1px dashed var(--line);margin-top:6px;padding-top:8px">
+      <span style="color:${col}">${arrow} ${a.trend} · tutta la famiglia ${esc(li.ref)} · ${per}${fmt(Math.round(a.slope*10)/10)} kg/sett</span>
       <b style="color:${col}">→ ${fmt(Math.round(a.proj4))} kg tra 4 sett</b></div>`;
   }
   return `<div class="lbl2">Previsione carichi · 1RM stimato ${one} kg</div>
@@ -884,6 +1092,10 @@ function openEx(e){
     <h3>${e.n}</h3>
     <div class="sub">${e.sets.length}×${e.r} · riferimento <b>${fmt(e.w)} kg</b> · pausa ${e.rest}s${e.orig?` · sostituto di ${e.orig.n}`:""}</div>
     <div class="big">${media(e)}</div>
+    <div class="cfgrow" style="margin-bottom:10px">
+      <span class="cl">Esercizio a tempo<small>${isTempo(e)?"si misura in secondi: resta fuori dal tonnellaggio":"si misura in ripetizioni"}</small></span>
+      <button id="ex_tempo" class="${isTempo(e)?"on":""}">${isTempo(e)?"Sì":"No"}</button>
+    </div>
     ${cues.length?`<ol class="cues">${cues.map(c=>`<li>${c}</li>`).join("")}</ol>`:""}
     ${predictBlock(e)}
     ${plateHTML(e)}
@@ -903,8 +1115,21 @@ function openEx(e){
     }).join(""):`<div class="empty">Nessuna alternativa in archivio.</div>`}
     <button class="revert" id="swapany" style="margin-top:4px">Sostituisci con un altro esercizio della libreria…</button>
     <button class="closebtn" id="mclose">Chiudi</button>`;
+  sheet.querySelector("#ex_tempo").onclick=()=>{
+    const nuovo=!isTempo(e);
+    e.tempo=nuovo;
+    /* allineo la stringa: da "8-10" a "40 sec" e viceversa, cosi' il
+       segnaposto delle serie e la riga di tenuta partono da un valore sensato */
+    if(nuovo&&!/sec|min/i.test(String(e.r||"")))e.r=(tempoSec(e.r)||40)+" sec";
+    if(!nuovo&&/sec|min/i.test(String(e.r||"")))e.r="10";
+    save();openEx(e);render();
+  };
   const u=sheet.querySelector("#imgurl");
-  u.onchange=()=>{e.img=u.value.trim();save();openEx(e);render()};
+  u.onchange=()=>{
+    const v=u.value.trim();
+    if(imgTroppoGrande(v)){toast("Immagine troppo pesante: usa un link https invece del codice incollato");u.value=e.img||"";return}
+    e.img=v;save();openEx(e);render();
+  };
   const rv=sheet.querySelector("#revbtn");
   if(rv)rv.onclick=async()=>{
     if(!await ask(`Ripristino <b>${e.orig.n}</b> a ${fmt(e.orig.w)} kg?`,"Ripristina"))return;
@@ -2051,6 +2276,79 @@ function analyzeRef(ref){
 }
 function analyzeAll(){const o={};Object.keys(FALLBACK_REFS).forEach(r=>o[r]=analyzeRef(r));return o;}
 
+/* ===================== ANDAMENTO DEL SINGOLO ESERCIZIO =====================
+   analyzeRef() aggrega tutti gli esercizi che alimentano un riferimento: utile
+   per la forza complessiva, ma fuorviante sul campo. Se sali di 5 kg all'hack
+   squat mentre la leg press e' ferma, la retta aggregata puo' restare piatta o
+   negativa e leggi "regressione" pur essendo migliorato.
+   Questa funzione guarda UN esercizio soltanto, e soprattutto dice PERCHE':
+   spesso il 1RM stimato cala perche' hai alzato il carico tagliando molte
+   ripetizioni, e quel numero da solo non racconta nulla. */
+function analyzeExercise(name){
+  const pts=[];
+  S.log.forEach(s=>{
+    const ts=s.iso?new Date(s.iso).getTime():null;
+    (s.ex||[]).forEach(x=>{
+      if(normName(x.n)!==normName(name))return;
+      if(x.tempo)return;                       // a tempo: niente 1RM
+      let best=0,bw=0,br=0;
+      String(x.sets).split(/\s+/).forEach(tok=>{
+        const at=tok.split("@"); const rir=at[1]!=null?parseFloat(at[1]):null;
+        const mm=at[0].split("×"); if(mm.length!==2)return;
+        const w=parseFloat(String(mm[0]).replace(",","."))||0;
+        const r=parseInt(mm[1])||0;
+        if(/s$/i.test(mm[1]))return;           // secondi, non ripetizioni
+        const one=e1rm(w,r,rir);
+        if(one>best){best=one;bw=w;br=r}
+      });
+      if(best>0)pts.push({ts,y:best,w:bw,r:br,date:s.date});
+    });
+  });
+  if(pts.length<2)return {name,n:pts.length,trend:null};
+
+  const ultimo=pts[pts.length-1], prec=pts[pts.length-2];
+  const dW=ultimo.w-prec.w, dR=ultimo.r-prec.r, d1=ultimo.y-prec.y;
+
+  /* pendenza settimanale solo se le date ci sono; altrimenti confronto secco */
+  let slope=null,r2=null;
+  const conTs=pts.filter(p=>p.ts);
+  if(conTs.length>=3){
+    const t0=Math.min(...conTs.map(p=>p.ts));
+    const P=conTs.map(p=>({x:(p.ts-t0)/(7*864e5),y:p.y})).sort((a,b)=>a.x-b.x);
+    const fit=linfit(P);
+    if(fit){slope=fit.slope;r2=fit.r2}
+  }
+
+  let trend;
+  const base=Math.max(1,prec.y);
+  if(slope!=null){
+    const pct=slope/Math.max(1,ultimo.y)*100;
+    trend=pct>0.6?"progressione":pct<-0.6?"regressione":"stallo";
+  } else {
+    const pct=d1/base*100;
+    trend=pct>1?"progressione":pct<-1?"regressione":"stallo";
+  }
+
+  /* la spiegazione: senza questa, "regressione" con il carico salito sembra un bug */
+  let perche="";
+  if(dW>0&&dR<0&&d1<=0)
+    perche=`carico +${fmt(dW)} kg ma ${Math.abs(dR)} ripetizioni in meno: il massimale stimato scende lo stesso`;
+  else if(dW>0&&d1>0)
+    perche=`carico +${fmt(dW)} kg a parità di ripetizioni`;
+  else if(dW===0&&dR>0)
+    perche=`stesso carico, +${dR} ripetizioni`;
+  else if(dW<0)
+    perche=`carico ${fmt(dW)} kg rispetto alla volta prima`;
+  else if(dR<0&&dW===0)
+    perche=`stesso carico, ${dR} ripetizioni`;
+
+  return {name,n:pts.length,trend,slope,r2,
+    current:ultimo.y,prev:prec.y,delta:d1,
+    ultimo:{w:ultimo.w,r:ultimo.r,date:ultimo.date},
+    prec:{w:prec.w,r:prec.r,date:prec.date},
+    perche};
+}
+
 // previsione carico di lavoro per un esercizio a un dato numero di ripetizioni e RIR target
 function predictLoad(name,reps,rirTarget){
   const li=LIBN[name]; if(!li||li.k<=0)return 0;
@@ -2369,7 +2667,8 @@ function buildPromptMd(kind,mode){
   P.push("Panca piana bilanciere: carico 62.5");
   P.push("Seated row: serie 4");
   P.push("Curl martello: ripetizioni 8-10");
-  P.push("+ Croci ai cavi: 3x12");
+  P.push("+ Croci ai cavi: 3x12 @ dopo Panca piana bilanciere");
+  P.push("sposta Seated row in 2");
   P.push("- Calf raise");
   P.push("GIORNO B");
   P.push("RDL bilanciere: carico 80");
@@ -2381,9 +2680,14 @@ function buildPromptMd(kind,mode){
   P.push("- `NomeEsercizio: ripetizioni X` cambia il range (es. 8, 6-8, 12).");
   P.push("- `NomeEsercizio: pausa N` cambia il recupero in secondi.");
   P.push("- `NomeEsercizio: nota TESTO` scrive una nota sull'esercizio.");
-  P.push("- `+ NomeEsercizio: SERIExRIPETIZIONI` aggiunge un esercizio al giorno.");
+  P.push("- `+ NomeEsercizio: SERIExRIPETIZIONI` aggiunge un esercizio in fondo al giorno.");
+  P.push("- `+ NomeEsercizio: SERIExRIPETIZIONI @ dopo AltroEsercizio` lo inserisce in un punto preciso. Al posto di `dopo X` puoi scrivere `prima di X` oppure un numero: `@ 3`.");
+  P.push("- `sposta NomeEsercizio dopo AltroEsercizio` cambia l'ordine di un esercizio gia' presente. Valgono anche `prima di X` e `sposta X in 2`.");
   P.push("- `- NomeEsercizio` rimuove un esercizio dal giorno.");
   P.push("- Una riga per modifica. Nessun commento dentro il blocco.");
+  P.push("");
+  P.push("L'ORDINE CONTA: gli esercizi sono numerati nell'elenco della giornata. Un fondamentale pesante va all'inizio, l'isolamento in fondo. Se aggiungi qualcosa che non va per ultimo, indica SEMPRE la posizione con @, altrimenti finisce in coda dove probabilmente non serve.");
+  P.push("Gli esercizi marcati `sec` si misurano in secondi di tenuta, non in ripetizioni: per loro `ripetizioni 45 sec` e' la forma giusta.");
   P.push("");
   P.push("### Nomi degli esercizi");
   P.push("");
@@ -2521,10 +2825,13 @@ function findExercise(name){
   return bestScore>=0.6?best:null;
 }
 
-function parsePatch(txt){
+/* defDay: giorno da usare quando il blocco non ha l'intestazione GIORNO X.
+   Senza questo, una modifica proposta in chat mentre sei sul giorno C finiva
+   applicata al giorno A, perche' resolvePatch ripiegava su S.days[0]. */
+function parsePatch(txt,defDay){
   const res={ops:[],refs:[],newEx:[],errors:[]};
   const lines=String(txt).split(/\r?\n/).map(l=>l.trim()).filter(l=>l&&!l.startsWith("```"));
-  let day=null,mode="ops";
+  let day=defDay||null,mode="ops";
   lines.forEach(raw=>{
     const line=raw.replace(/^[-*]\s+(?=[A-Za-zÀ-ÿ].*:)/,""); // evita di confondere "- nome:" con rimozione
     if(/^patch\s+scheda/i.test(line)){mode="ops";return}
@@ -2554,9 +2861,29 @@ function parsePatch(txt){
       res.newEx.push({n:name,ic:IC_LIST.includes(ic)?ic:"curl",grp:GRP_LIST.includes(grp)?grp:"Braccia",st:inc,k:k>0?k:0,ref,day});
       return;
     }
-    // aggiunta esercizio
-    const am=line.match(/^\+\s*(.+?)\s*:\s*(\d+)\s*[x×]\s*([\d\-+ ]+)$/i);
-    if(am){res.ops.push({type:"add",day,name:am[1].trim(),sets:parseInt(am[2]),reps:am[3].trim()});return}
+    // spostamento: "sposta Nome in 2" oppure "sposta Nome dopo Panca piana"
+    const mv=line.match(/^sposta\s+(.+?)\s+(?:in\s+posizione\s+|in\s+|alla\s+posizione\s+)(\d+)$/i);
+    if(mv){res.ops.push({type:"move",day,name:mv[1].trim(),pos:parseInt(mv[2])});return}
+    const mv2=line.match(/^sposta\s+(.+?)\s+(dopo|prima\s+di)\s+(.+)$/i);
+    if(mv2){res.ops.push({type:"move",day,name:mv2[1].trim(),
+      rel:/dopo/i.test(mv2[2])?"dopo":"prima",anchor:mv2[3].trim()});return}
+    /* aggiunta esercizio, con posizione facoltativa dopo la @
+       "+ Croci ai cavi: 3x12 @ 2"  oppure  "+ Croci ai cavi: 3x12 @ dopo Panca piana"
+       Senza @ finisce in fondo, come prima. */
+    const am=line.match(/^\+\s*(.+?)\s*:\s*(\d+)\s*[x×]\s*([\d\-+ a-z]+?)\s*(?:@\s*(.+))?$/i);
+    if(am){
+      const op={type:"add",day,name:am[1].trim(),sets:parseInt(am[2]),reps:am[3].trim()};
+      const dove=(am[4]||"").trim();
+      if(dove){
+        const num=dove.match(/^(?:posizione\s+)?(\d+)$/i);
+        if(num)op.pos=parseInt(num[1]);
+        else{
+          const r2=dove.match(/^(dopo|prima\s+di)\s+(.+)$/i);
+          if(r2){op.rel=/dopo/i.test(r2[1])?"dopo":"prima";op.anchor=r2[2].trim()}
+        }
+      }
+      res.ops.push(op);return;
+    }
     const am2=line.match(/^\+\s*(.+)$/);
     if(am2&&!line.includes(":")){res.ops.push({type:"add",day,name:am2[1].trim(),sets:3,reps:"10"});return}
     // rimozione
@@ -2581,6 +2908,31 @@ function parsePatch(txt){
   return res;
 }
 
+/* ricerca tollerante dell'esercizio dentro un giorno: nome esatto, poi parziale */
+function findInDay(d,name){
+  return (d.ex||[]).find(e=>normName(e.n)===normName(name))||
+         (d.ex||[]).find(e=>normName(e.n).includes(normName(name))||normName(name).includes(normName(e.n)));
+}
+/* indice di destinazione da un'operazione con pos / rel+anchor. -1 = in fondo */
+function targetIndex(d,op){
+  if(op.pos!=null&&!isNaN(op.pos))return Math.max(0,Math.min(d.ex.length,op.pos-1));
+  if(op.anchor){
+    const a=findInDay(d,op.anchor);
+    if(!a)return -1;
+    const i=d.ex.indexOf(a);
+    return op.rel==="prima"?i:i+1;
+  }
+  return -1;
+}
+function posLabel(d,op){
+  if(op.pos!=null&&!isNaN(op.pos))return "in posizione "+op.pos;
+  if(op.anchor){
+    const a=findInDay(d,op.anchor);
+    return a?(op.rel==="prima"?"prima di ":"dopo ")+a.n:"";
+  }
+  return "";
+}
+
 function resolvePatch(pt){
   const plan=[];
   pt.newEx.forEach(nx=>{
@@ -2588,14 +2940,27 @@ function resolvePatch(pt){
       detail:`${nx.grp} · ${nx.ic}${nx.k>0?` · stima ${nx.k}× ${nx.ref}`:" · senza stima carico"}`,data:nx});
   });
   pt.ops.forEach(op=>{
-    const d=S.days.find(x=>x.id===op.day)||S.days[0];
-    if(!d){plan.push({ok:false,label:"Giorno non trovato",detail:op.day||"?"});return}
+    const d=S.days.find(x=>x.id===op.day);
+    if(!d){plan.push({ok:false,label:"Giorno non trovato: la modifica non è stata applicata",
+      detail:op.day?("giorno "+op.day+" inesistente"):"il blocco non indica a quale giorno si riferisce"});return}
     if(op.type==="add"){
       const li=findExercise(op.name)||LIBN[op.name];
       const isNew=pt.newEx.find(n=>normName(n.n)===normName(op.name));
       if(!li&&!isNew){plan.push({ok:false,label:`Aggiungere "${op.name}" al giorno ${d.id}`,detail:"esercizio non riconosciuto"});return}
+      const dove=posLabel(d,op);
       plan.push({ok:true,kind:"add",label:`Aggiungi ${li?li.n:op.name} al giorno ${d.id}`,
-        detail:`${op.sets}×${op.reps}`,data:{day:d.id,li,name:op.name,sets:op.sets,reps:op.reps}});
+        detail:`${op.sets}×${op.reps}${dove?" · "+dove:" · in fondo"}`,
+        data:{day:d.id,li,name:op.name,sets:op.sets,reps:op.reps,pos:op.pos,rel:op.rel,anchor:op.anchor}});
+      return;
+    }
+    if(op.type==="move"){
+      const ex0=findInDay(d,op.name);
+      if(!ex0){plan.push({ok:false,label:`Spostare "${op.name}"`,detail:`non presente nel giorno ${d.id}`});return}
+      const dove=posLabel(d,op);
+      if(!dove){plan.push({ok:false,label:`Spostare ${ex0.n}`,detail:"destinazione non chiara"});return}
+      plan.push({ok:true,kind:"move",label:`Sposta ${ex0.n} nel giorno ${d.id}`,
+        detail:`da posizione ${d.ex.indexOf(ex0)+1} · ${dove}`,
+        data:{day:d.id,ex:ex0,pos:op.pos,rel:op.rel,anchor:op.anchor}});
       return;
     }
     const ex=d.ex.find(e=>normName(e.n)===normName(op.name))||
@@ -2637,8 +3002,20 @@ function applyPatchPlan(plan,refOps){
       const nm=li?li.n:p.data.name;
       if(d.ex.find(e=>normName(e.n)===normName(nm)))return;
       const est=li&&li.k>0?round(currentRefs()[li.ref]*li.k,li.st||2.5):0;
-      d.ex.push({n:nm,ic:li?li.ic:"curl",img:"",w:est,inc:li?(li.st||2.5):2.5,rest:90,
-        r:p.data.reps,sets:mk(est,p.data.sets||3),note:"",tag:est?"NUOVO":"da tarare"});
+      const nuovo={n:nm,ic:li?li.ic:"curl",img:"",w:est,inc:li?(li.st||2.5):2.5,rest:90,
+        r:p.data.reps,sets:mk(est,p.data.sets||3),note:"",tag:est?"NUOVO":"da tarare"};
+      /* posizione richiesta, altrimenti in fondo come prima */
+      const idx=targetIndex(d,p.data);
+      if(idx>=0)d.ex.splice(idx,0,nuovo); else d.ex.push(nuovo);
+      n++;return;
+    }
+    if(p.kind==="move"){
+      const d=S.days.find(x=>x.id===p.data.day);if(!d)return;
+      const cur=d.ex.indexOf(p.data.ex); if(cur<0)return;
+      let idx=targetIndex(d,p.data); if(idx<0)idx=d.ex.length;
+      d.ex.splice(cur,1);
+      if(idx>cur)idx--;                       // l'estrazione ha accorciato la lista
+      d.ex.splice(Math.max(0,Math.min(d.ex.length,idx)),0,p.data.ex);
       n++;return;
     }
     if(p.kind==="del"){
@@ -2681,7 +3058,7 @@ function importPatchAsk(){
   sheet.querySelector("#pgo").onclick=()=>{
     const txt=sheet.querySelector("#patchin").value;
     if(!txt.trim()){toast("Incolla prima il testo");return}
-    const pt=parsePatch(txt);
+    const pt=parsePatch(txt,view);
     const plan=resolvePatch(pt);
     if(!plan.length&&!pt.refs.length){toast("Nessuna modifica riconosciuta");return}
     previewPatch(plan,pt);
@@ -2966,15 +3343,34 @@ function wireTools(){
     {const l=S.log,bd=S.body,cf=S.cfg,pf=S.profile;S=structuredClone(D);S.log=l;S.body=bd;S.cfg=cf;S.profile=pf;save();render();toast("Scheda ripristinata")}};
 }
 
+/* stile dei comandi di riordino: iniettato qui per tenere insieme
+   comportamento e aspetto di una cosa sola */
+(function stileOrdine(){
+  if(document.getElementById("ord-css"))return;
+  const st=document.createElement("style");st.id="ord-css";
+  st.textContent=`
+    .ord{display:flex;flex-direction:column;gap:2px;flex:none;margin-right:2px}
+    .ord button{width:30px;height:22px;padding:0;border:1px solid var(--line);border-radius:4px;
+      background:var(--card2);color:var(--soft);font-size:10px;line-height:1;cursor:pointer;
+      display:flex;align-items:center;justify-content:center}
+    .ord button:active{background:var(--acc);color:#0C0F14;border-color:var(--acc)}
+    .ex:first-of-type .ord .up,.ex:last-of-type .ord .dn{opacity:.25;pointer-events:none}
+  `;
+  document.head.appendChild(st);
+})();
+
 /* ---------------- timer recupero ---------------- */
 let tId=null,endAt=0;
 const clock=document.getElementById("clock"),bar=document.getElementById("bar");
+let tLabel="RECUPERO";
 function paint(sec){
-  clock.innerHTML=`${String(Math.floor(sec/60)).padStart(2,"0")}:${String(sec%60).padStart(2,"0")}<small>RECUPERO</small>`;
+  clock.innerHTML=`${String(Math.floor(sec/60)).padStart(2,"0")}:${String(sec%60).padStart(2,"0")}<small>${tLabel}</small>`;
 }
-function startTimer(sec){
+/* etichetta: RECUPERO fra le serie, TENUTA durante un esercizio isometrico */
+function startTimer(sec,label){
   unlockAudio();
   clearInterval(tId);
+  tLabel=label||"RECUPERO";
   endAt=Date.now()+sec*1000;
   bar.classList.add("run");bar.classList.remove("fire");
   paint(sec);
@@ -2983,12 +3379,14 @@ function startTimer(sec){
     if(left>0){paint(left);return}
     clearInterval(tId);
     bar.classList.add("fire");
-    clock.innerHTML=`GO!<small>SERIE SUCCESSIVA</small>`;
-    beep(3);buzz();notify("Recupero finito","GO — serie successiva");
+    const fine=tLabel==="TENUTA";
+    clock.innerHTML=fine?`STOP!<small>TENUTA FINITA</small>`:`GO!<small>SERIE SUCCESSIVA</small>`;
+    beep(3);buzz();
+    notify(fine?"Tenuta finita":"Recupero finito",fine?"Puoi scendere":"GO — serie successiva");
     setTimeout(stopTimer,5000);
   },200);
 }
-function stopTimer(){clearInterval(tId);bar.classList.remove("run","fire");clock.innerHTML=`--:--<small>RECUPERO</small>`}
+function stopTimer(){clearInterval(tId);tLabel="RECUPERO";bar.classList.remove("run","fire");clock.innerHTML=`--:--<small>RECUPERO</small>`}
 document.getElementById("stop").onclick=stopTimer;
 document.addEventListener("visibilitychange",()=>{
   if(!document.hidden&&bar.classList.contains("run")){
@@ -3035,8 +3433,12 @@ sv.onclick=async()=>{
   const ex=d.ex.map(e=>{
     const done=e.sets.filter(s=>s.done);
     const use=done.length?done:e.sets;
-    use.forEach(s=>{vol+=s.w*(parseInt(s.r)||0)});
-    return {n:e.n,sets:use.map(s=>`${fmt(s.w)}×${s.r||"–"}${s.rir!=null?"@"+s.rir:""}`).join("  ")};
+    const tmp=isTempo(e);
+    /* peso x secondi non e' un volume: gli esercizi a tempo restano fuori dal
+       tonnellaggio, altrimenti un plank zavorrato falserebbe tutta la seduta */
+    if(!tmp)use.forEach(s=>{vol+=s.w*(parseInt(s.r)||0)});
+    return {n:e.n,tempo:tmp||undefined,
+      sets:use.map(s=>`${fmt(s.w)}×${s.r||"–"}${tmp?"s":""}${s.rir!=null?"@"+s.rir:""}`).join("  ")};
   });
   const min=sessStart?Math.max(1,sessMinutes()):null;
   const isDeload=S._pendingDeload===d.id;
@@ -3568,6 +3970,19 @@ async function fetchUser(token){
   if(!r.ok)return null;
   return r.json();
 }
+/* Un solo rinnovo per volta. Con due chiamate parallele in scadenza (il
+   salvataggio in background e una lettura), entrambe ricevevano 401 ed
+   entrambe chiedevano un refresh: Supabase accetta il primo e invalida il
+   secondo, e ti ritrovavi scollegato senza motivo. Ora la seconda chiamata
+   aspetta la Promise gia' in volo invece di aprirne un'altra. */
+let refreshInFlight=null;
+function refreshSessionOnce(rt){
+  if(refreshInFlight)return refreshInFlight;
+  refreshInFlight=refreshSession(rt)
+    .then(ns=>{SESSION=ns;store.set("supa_session",JSON.stringify(ns));return ns})
+    .finally(()=>{refreshInFlight=null});
+  return refreshInFlight;
+}
 async function refreshSession(rt){
   return supaAuth("token?grant_type=refresh_token",{refresh_token:rt});
 }
@@ -3610,8 +4025,10 @@ async function pullAndMerge(){
   }
 }
 
+let pushFalliti=0,pushRetryTimer=null;
 async function pushNow(){
   if(!syncReady||!SESSION||!CLOUD_USER)return;
+  clearTimeout(pushRetryTimer);
   const payload={mu:MU,ts:parseInt(store.get("scheda_ts")||String(Date.now()),10)};
   try{
     const r=await fetch(`${SUPA_URL}/rest/v1/schede?on_conflict=user_id`,{
@@ -3625,14 +4042,29 @@ async function pushNow(){
       body:JSON.stringify({user_id:CLOUD_USER.id,stato:payload,aggiornato:new Date().toISOString()})
     });
     if(r.status===401){                       // token scaduto: rinnova e riprova una volta
-      const ns=await refreshSession(SESSION.refresh_token);
-      SESSION=ns; store.set("supa_session",JSON.stringify(ns));
+      if(pushNow._retry){pushNow._retry=false;throw new Error("sessione scaduta")}
+      pushNow._retry=true;
+      try{ await refreshSessionOnce(SESSION.refresh_token); }
+      finally{ pushNow._retry=false; }
       return pushNow();
     }
-    if(!r.ok)throw new Error("scrittura fallita");
+    if(!r.ok)throw new Error("scrittura fallita ("+r.status+")");
+    pushFalliti=0;
     showDot("salvato");
   }catch(e){
-    showDot("salvato solo qui",true);         // resta in localStorage, ripartira' al prossimo salvataggio
+    console.warn("Sincronizzazione non riuscita:",e.message||e);
+    /* prima si aspettava il prossimo salvataggio manuale: se chiudevi l'app
+       subito dopo, quel salvataggio non arrivava mai e il dato restava solo
+       sul dispositivo. Ora si riprova da soli, allontanando i tentativi. */
+    pushFalliti++;
+    if(pushFalliti<=5){
+      const attesa=Math.min(60000,2000*Math.pow(2,pushFalliti-1));   // 2s,4s,8s,16s,32s
+      showDot("riprovo tra "+Math.round(attesa/1000)+"s",true);
+      clearTimeout(pushRetryTimer);
+      pushRetryTimer=setTimeout(pushNow,attesa);
+    } else {
+      showDot("salvato solo qui",true);
+    }
   }
 }
 
@@ -3642,6 +4074,8 @@ schedulePush=function(){
   clearTimeout(pushTimer);
   pushTimer=setTimeout(pushNow,1200);
 };
+/* il ritorno della connessione e' il momento giusto per riprovare */
+window.addEventListener("online",()=>{if(syncReady&&pushFalliti){pushFalliti=0;pushNow()}});
 
 /* ---- interfaccia di accesso ---- */
 function drawAuthMode(){
@@ -3692,8 +4126,8 @@ document.getElementById("authOffline").onclick=()=>{
    si offre solo l'installazione. Va chiamato DOPO pullAndMerge, altrimenti si
    rischia di far rifare le domande a chi ha gia' i dati in cloud. */
 function afterLoginFlow(){
-  try{mergeUserLib()}catch(e){}
-  try{loadSharedLib()}catch(e){}
+  try{mergeUserLib()}catch(e){console.error("mergeUserLib:",e)}
+  try{loadSharedLib()}catch(e){console.warn("Libreria condivisa non caricata:",e)}
   if(S.pendingOnb||!S.onbDone){openOnb(false,true);return}
   // apre sul giorno che tocca oggi, senza spostare chi e' a meta' seduta
   try{
@@ -4041,7 +4475,7 @@ function aiAnalysisAsk(){
         store.set("last_ai",String(Date.now()));
         const apb=out.querySelector("#apply");
         if(apb)apb.onclick=()=>{
-          const pt=parsePatch(patch), plan=resolvePatch(pt);
+          const pt=parsePatch(patch,view), plan=resolvePatch(pt);
           if(!plan.length&&!pt.refs.length){toast("Nessuna modifica riconosciuta");return}
           previewPatch(plan,pt);
         };
@@ -4068,7 +4502,7 @@ function aiAnalysisAsk(){
         store.set("last_ai",String(Date.now()));
         const ap=out.querySelector("#apply");
         if(ap)ap.onclick=()=>{
-          const pt=parsePatch(patch), plan=resolvePatch(pt);
+          const pt=parsePatch(patch,view), plan=resolvePatch(pt);
           if(!plan.length&&!pt.refs.length){toast("Nessuna modifica riconosciuta");return}
           previewPatch(plan,pt);
         };
@@ -4945,16 +5379,23 @@ const GOALTXT=()=>{
 function ctxPosition(dayId){
   const d=dayId==="RND"&&S.rnd?{id:"RANDOM",focus:S.rnd.focus,ex:S.rnd.ex}:(S.days||[]).find(x=>x.id===dayId);
   if(!d)return "POSIZIONE: fuori dalla scheda (tab "+dayId+").";
-  let tot=0,fatte=0,inCorso=null;
+  let tot=0,fatte=0,inCorso=null,prossimo=null;
   (d.ex||[]).forEach(e=>{
     const dn=(e.sets||[]).filter(x=>x.done).length, t=(e.sets||[]).length;
     tot+=t;fatte+=dn;
-    if(!inCorso&&dn>0&&dn<t)inCorso=e.n+" (serie "+(dn+1)+" di "+t+")";
-    if(!inCorso&&dn===0&&fatte>0)inCorso=e.n+" (prossimo)";
+    const u=unitOf(e);
+    if(!inCorso&&dn>0&&dn<t)
+      inCorso=e.n+" — serie "+(dn+1)+" di "+t+", "+fmt(e.w)+" kg × "+e.r+" "+u;
+    if(!inCorso&&!prossimo&&dn===0&&fatte>0)
+      prossimo=e.n+" — "+t+"×"+e.r+" "+u+" @ "+fmt(e.w)+" kg";
   });
+  const finita=tot>0&&fatte>=tot;
   const L=["POSIZIONE ATTUALE: giorno "+d.id+" — "+(d.focus||"")+".",
     "Avanzamento: "+fatte+"/"+tot+" serie completate"+(sessStart?", "+sessMinutes()+" minuti di seduta":", seduta non ancora avviata")+".",
-    inCorso?"Esercizio in corso: "+inCorso+".":(fatte===0?"Nessuna serie ancora spuntata.":"")];
+    finita?"Tutte le serie sono spuntate: la seduta e' finita, manca solo registrarla."
+      :inCorso?("Esercizio in corso: "+inCorso+".")
+      :prossimo?("Prossimo esercizio: "+prossimo+".")
+      :"Nessuna serie ancora spuntata: la seduta deve ancora cominciare."];
   return L.filter(Boolean).join("\n");
 }
 /* contesto COMPATTO per i turni successivi della chat: la posizione e i numeri
@@ -4963,9 +5404,25 @@ function ctxPosition(dayId){
    triplo per ripetere cose che il modello ha gia' nella conversazione. */
 function ctxCompact(dayId){
   const r=currentRefs();
-  return [ctxPosition(dayId),
-    "RIFERIMENTI: squat "+r.squat+", panca "+r.bench+", rematore "+r.row+", lento "+r.ohp+", cerniera "+r.hinge+" kg (per ~8 rip).",
-    "OBIETTIVO: "+GOALTXT()+"."].join("\n");
+  const L=[ctxPosition(dayId)];
+  /* l'elenco della giornata deve esserci SEMPRE: senza, dal secondo messaggio
+     in poi il modello non sa piu' quali esercizi hai davanti ne' a che carico,
+     e risponde a vuoto. Sono poche righe: il risparmio non vale la confusione. */
+  const d=dayId==="RND"&&S.rnd?S.rnd:(S.days||[]).find(x=>x.id===dayId);
+  if(d&&d.ex&&d.ex.length){
+    L.push("");
+    L.push("ESERCIZI DI OGGI (nell'ordine):");
+    d.ex.forEach((e,i)=>{
+      const fatte=(e.sets||[]).filter(x=>x.done).length, t=(e.sets||[]).length;
+      L.push((i+1)+". "+e.n+" "+t+"×"+e.r+" "+unitOf(e)+" @ "+fmt(e.w)+" kg"+
+        (fatte?"  [fatte "+fatte+"/"+t+"]":"  [da fare]")+
+        (e.ss?"  (superserie)":"")+(e.note?"  nota: "+e.note:""));
+    });
+  }
+  L.push("");
+  L.push("RIFERIMENTI: squat "+r.squat+", panca "+r.bench+", rematore "+r.row+", lento "+r.ohp+", cerniera "+r.hinge+" kg (per ~8 rip).");
+  L.push("OBIETTIVO: "+GOALTXT()+".");
+  return L.join("\n");
 }
 
 /* fotografia sintetica della situazione: e' il contesto che accompagna
@@ -4999,10 +5456,13 @@ function ctxForAI(dayId){
   if(d){
     L.push("");
     L.push("GIORNO "+d.id+" — "+d.focus);
-    (d.ex||[]).forEach(e=>{
+    /* numerati: servono all'AI per indicare una posizione quando propone
+       di aggiungere o spostare un esercizio */
+    (d.ex||[]).forEach((e,i)=>{
       const fatte=(e.sets||[]).filter(s=>s.done).length, tot=(e.sets||[]).length;
-      L.push("- "+e.n+" "+tot+"×"+e.r+" @ "+fmt(e.w)+" kg"+
+      L.push((i+1)+". "+e.n+" "+tot+"×"+e.r+" "+unitOf(e)+" @ "+fmt(e.w)+" kg"+
              (fatte?"  [FATTO: "+fatte+"/"+tot+" serie]":"  [DA FARE]")+
+             (e.ss?"  (superserie)":"")+
              (e.note?"  nota: "+e.note:""));
     });
   }
@@ -5230,9 +5690,18 @@ function aiChatAsk(){
     const primoTurno=S.chat.filter(m=>m.r==="u").length<=1;
     const contesto=primoTurno?ctxForAI(view):ctxCompact(view);
     const P=[pv("chat_regole"),
-      "Se proponi una modifica concreta alla scheda, chiudi con un blocco applicabile:",
-      "PATCH SCHEDA / GIORNO X / NomeEsercizio: carico N  (oppure serie N, ripetizioni X, pausa N)",
-      "Una riga per modifica. Se non proponi modifiche, non scrivere il blocco.",
+      "Se proponi una modifica concreta alla scheda, chiudi con un blocco applicabile.",
+      "Formato, una riga per modifica, SEMPRE con l'intestazione del giorno:",
+      "PATCH SCHEDA",
+      "GIORNO "+(view==="RND"?"A":view),
+      "NomeEsercizio: carico 62.5        (oppure: serie 4 / ripetizioni 8-10 / pausa 120 / nota TESTO)",
+      "+ NomeNuovo: 3x12 @ dopo NomeEsistente    (senza @ finisce in fondo; vale anche @ prima di X oppure @ 3)",
+      "sposta NomeEsercizio dopo AltroEsercizio  (per cambiare l'ordine di uno gia' presente)",
+      "- NomeEsercizio                            (per toglierlo)",
+      "L'intestazione GIORNO e' obbligatoria: senza, la modifica non si puo' applicare.",
+      "Usa i nomi esatti che vedi nell'elenco degli esercizi qui sotto.",
+      "L'ordine conta: i fondamentali pesanti all'inizio, l'isolamento in fondo. Se aggiungi qualcosa che non va per ultimo, indica la posizione con @.",
+      "Se non proponi modifiche, non scrivere il blocco.",
       "","CONTESTO AGGIORNATO:",contesto,
       "","CONVERSAZIONE FINORA:",storia,
       "","Rispondi solo all'ultima domanda dell'atleta."].join("\n");
@@ -5279,7 +5748,11 @@ async function aiExplainAsk(ex){
     sheet.querySelector("#ax_yt").onclick=()=>{
       try{window.open("https://www.youtube.com/results?search_query="+q,"_blank","noopener")}catch(e){}
     };
-    sheet.querySelector("#ax_img").onchange=e=>{ex.img=e.target.value.trim();save();render();toast("Immagine aggiornata")};
+    sheet.querySelector("#ax_img").onchange=ev=>{
+      const v=ev.target.value.trim();
+      if(imgTroppoGrande(v)){toast("Immagine troppo pesante: usa un link https");ev.target.value=ex.img||"";return}
+      ex.img=v;save();render();toast("Immagine aggiornata");
+    };
     sheet.querySelector("#ax_close").onclick=closeModal;
   }catch(e){
     sheet.innerHTML=`<h3>${esc(ex.n)}</h3><div class="nextbox late" style="margin-top:12px">${esc(e.message||"Errore")}</div>
@@ -5476,7 +5949,7 @@ function ssCard(run,d){
       <span class="ssnum">${k+1}</span>
       <div class="ssnm" data-act="open" data-k="${k}">
         <span class="nm">${esc(e.n)}</span>
-        <span class="sw">${(e.sets||[]).length}×${esc(e.r)} · tocca per tecnica</span>
+        <span class="sw">${(e.sets||[]).length}×${esc(e.r)} ${unitOf(e)} · tocca per tecnica</span>
       </div>
       <div class="sswt">
         <button class="ssminus" data-k="${k}">−</button>
@@ -5494,6 +5967,10 @@ function ssCard(run,d){
           <span class="badge">Superserie</span>
           <span>${nGiri} giri</span>
           <small>recupero ${rest}s solo a fine giro</small>
+          <div class="ord">
+            <button class="ssup" title="Sposta il blocco su">▲</button>
+            <button class="ssdn" title="Sposta il blocco giù">▼</button>
+          </div>
         </div>
       </summary>
       <div class="ssex">${head}</div>
@@ -5503,6 +5980,31 @@ function ssCard(run,d){
         <button class="ssgo">▶ Avvia recupero</button>
       </div>
     </details>`;
+
+  /* le frecce spostano l'intero blocco di superserie, non il singolo esercizio:
+     separare una coppia con una freccia sarebbe quasi sempre un errore */
+  const mossaSS=(dir)=>{
+    const list=d.ex;
+    const a=list.indexOf(run[0]), b=list.indexOf(run[run.length-1]);
+    if(a<0||b<0)return;
+    const blocco=list.slice(a,b+1);
+    if(dir<0){
+      if(a===0)return;
+      let pb=a-1,pa=pb; const pss=list[pb].ss;
+      if(pss){while(pa>0&&list[pa-1].ss===pss)pa--}
+      const prima=list.slice(pa,pb+1);
+      list.splice(pa,blocco.length+prima.length,...blocco,...prima);
+    } else {
+      if(b===list.length-1)return;
+      let na=b+1,nb=na; const nss=list[na].ss;
+      if(nss){while(nb<list.length-1&&list[nb+1].ss===nss)nb++}
+      const dopo=list.slice(na,nb+1);
+      list.splice(a,blocco.length+dopo.length,...dopo,...blocco);
+    }
+    save();render();
+  };
+  box.querySelector(".ssup").onclick=ev=>{ev.preventDefault();ev.stopPropagation();mossaSS(-1)};
+  box.querySelector(".ssdn").onclick=ev=>{ev.preventDefault();ev.stopPropagation();mossaSS(1)};
 
   const rounds=box.querySelector(".ssrounds");
 
@@ -5523,8 +6025,8 @@ function ssCard(run,d){
           <span class="n mini">${k+1}</span>
           <span class="f"><input class="sw" inputmode="decimal" value="${fmt(s.w)}"></span>
           <span class="lbl">kg ×</span>
-          <span class="f"><input class="sr" inputmode="numeric" value="${s.r||""}" placeholder="${esc(e.r)}"></span>
-          <span class="lbl">rip</span>
+          <span class="f"><input class="sr" inputmode="numeric" value="${s.r||""}" placeholder="${isTempo(e)?tempoSec(e.r)||esc(e.r):esc(e.r)}"></span>
+          <span class="lbl">${unitOf(e)}</span>
           <span class="f rirwrap"><input class="srir" inputmode="numeric" value="${s.rir!=null?s.rir:""}" placeholder="RIR"></span>
           <button class="tick">✓</button>`;
         row.querySelector(".sw").onchange=ev=>{s.w=parseFloat(ev.target.value.replace(",","."))||0;save();draw()};
@@ -5533,6 +6035,10 @@ function ssCard(run,d){
           s.rir=v===""?null:Math.max(0,parseFloat(v.replace(",","."))||0);save()};
         row.querySelector(".tick").onclick=()=>{
           unlockAudio();
+          if(!s.done&&(s.r===""||s.r==null)){
+            const sug=isTempo(e)?(tempoSec(e.r)||0):(topReps(e.r)||parseInt(e.r)||0);
+            if(sug>0)s.r=String(sug);
+          }
           if(!s.done&&(s.r===""||s.r==null)){
             const sug=topReps(e.r)||parseInt(e.r)||0;
             if(sug>0)s.r=String(sug);
@@ -5876,11 +6382,12 @@ function chatPatchButton(txt){
 }
 async function applyChatPatch(enc,soloOggi){
   const patch=decodeURIComponent(enc);
-  const pt=parsePatch(patch), plan=resolvePatch(pt);
+  /* il giorno aperto fa da riferimento se il blocco non lo dichiara */
+  const pt=parsePatch(patch,view), plan=resolvePatch(pt);
   if(!plan.length&&!pt.refs.length){toast("Nessuna modifica riconosciuta");return}
   if(soloOggi){
     // marca gli esercizi toccati cosi' tornano com'erano a fine seduta
-    plan.forEach(x=>{const e=x.ex;
+    plan.forEach(x=>{const e=x.data&&x.data.ex;
       if(e&&!e.orig){e.orig={n:e.n,ic:e.ic,w:e.w,r:e.r,rest:e.rest,inc:e.inc,note:e.note};e._temp=true}});
   }
   previewPatch(plan,pt);
@@ -5928,7 +6435,13 @@ function signalsFor(dayId){
   (d.ex||[]).forEach(e=>{const v=loadVerdict(dayId,e);
     if(v)out.push((v.t==="sali"?"PRONTO A SALIRE":"CARICO DA RIVEDERE")+" — "+e.n+": "+v.txt)});
   const g=daysSinceLast(); if(g!=null&&g>=7)out.push("STOP: non si allena da "+g+" giorni.");
-  if(typeof deloadHint==="function"&&deloadHint(dayId))out.push("DELOAD: l'app segnala che è ora di scaricare.");
+  if(typeof deloadHint==="function"){
+    const dl=deloadHint(dayId);
+    if(dl)out.push("DELOAD: l'app segnala che e' ora di scaricare"+
+      (dl.motivo==="rir"?" — RIR medio "+(Math.round(dl.rir*10)/10)+" nelle ultime 3 sedute, quasi a cedimento":
+       dl.motivo==="volume"?" — tonnellaggio in calo da due sedute":
+       " — "+dl.since+" sedute senza scarico")+".");
+  }
   const a=volumeAudit(S.days); if(a.scoperti.length)
     out.push("VOLUME: "+a.scoperti.map(x=>x.grp+" a "+x.ha+" serie su "+x.serve).join(", ")+".");
   const pp=pushPull(S.days); if(pp.squilibrio)
@@ -6109,10 +6622,9 @@ async function supaRest(path,opt){
   const r=await fetch(`${SUPA_URL}/rest/v1/${path}`,Object.assign({
     headers:{"Authorization":"Bearer "+SESSION.access_token,"apikey":SUPA_KEY,
              "Content-Type":"application/json","Prefer":"return=minimal"}},opt||{}));
-  if(r.status===401&&SESSION.refresh_token){
-    const ns=await refreshSession(SESSION.refresh_token);
-    SESSION=ns;store.set("supa_session",JSON.stringify(ns));
-    return supaRest(path,opt);
+  if(r.status===401&&SESSION.refresh_token&&!(opt&&opt._riprovato)){
+    await refreshSessionOnce(SESSION.refresh_token);
+    return supaRest(path,Object.assign({},opt,{_riprovato:true}));
   }
   return r;
 }
