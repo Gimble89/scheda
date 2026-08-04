@@ -15,7 +15,7 @@ const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="27.2";
+const APP_VERSION="27.3";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
@@ -225,6 +225,37 @@ function validateDays(days){
 /* ---------------- MULTI-UTENTE ----------------
    MU = { users:[{id,state}], active:id }. La vecchia chiave scheda_v3
    (profilo singolo) viene migrata al primo utente, così non si perde nulla. */
+/* ---- riconoscimento degli esercizi a tempo ----
+   Definito QUI, prima di normState, perche' normState lo usa durante la
+   valutazione del modulo: se le costanti stessero piu' in basso finirebbero
+   nella zona morta temporale e l'app non partirebbe affatto. */
+/* Esercizi che per loro natura si misurano in secondi: le isometrie non hanno
+   ripetizioni da contare. Serve perche' quando uno di questi entra dalla
+   libreria eredita le ripetizioni generiche del suo gruppo (es. "15"), e senza
+   riconoscimento per nome resterebbe etichettato "rip" per sempre. */
+const TEMPO_NOMI=/plank|hollow|isometri|wall ?sit|dead ?hang|farmer|passeggiata del contadino|bear crawl|superman|bird ?dog|ponte glutei isometric|tenuta|hang/i;
+function isTempoNome(nome){return TEMPO_NOMI.test(String(nome||""))}
+function isTempo(e){
+  if(!e)return false;
+  if(e.tempo===true)return true;
+  if(e.tempo===false)return false;              // scelta esplicita dell'utente: si rispetta
+  if(/sec|min|"|'/i.test(String(e.r||"")))return true;
+  return isTempoNome(e.n);
+}
+/* secondi di partenza sensati quando un esercizio a tempo arriva senza durata */
+const TEMPO_DEFAULT=40;
+const unitOf=e=>isTempo(e)?"sec":"rip";
+/* secondi previsti da una stringa tipo "40 sec", "30-45 sec", "1 min" */
+function tempoSec(r){
+  const t=String(r||"");
+  const min=t.match(/(\d+)\s*min/i);
+  if(min)return parseInt(min[1])*60;
+  const rng=t.match(/(\d+)\s*-\s*(\d+)/);
+  if(rng)return parseInt(rng[2]);
+  const one=t.match(/(\d+)/);
+  return one?parseInt(one[1]):0;
+}
+
 function normState(st){
   if(!st.days||st.days.length<1)st=structuredClone(D);
   // se i 3 giorni esistono ma sono TUTTI senza esercizi (stato creato da un onboarding vuoto),
@@ -510,33 +541,6 @@ function notify(title,body){
    stessa cosa per chi scrive di fretta.
    Conseguenze: l'etichetta diventa "sec", il tonnellaggio esclude l'esercizio
    (peso x secondi non e' un volume), e il suggerimento di sovraccarico tace. */
-/* Esercizi che per loro natura si misurano in secondi: le isometrie non hanno
-   ripetizioni da contare. Serve perche' quando uno di questi entra dalla
-   libreria eredita le ripetizioni generiche del suo gruppo (es. "15"), e senza
-   riconoscimento per nome resterebbe etichettato "rip" per sempre. */
-const TEMPO_NOMI=/plank|hollow|isometri|wall ?sit|dead ?hang|farmer|passeggiata del contadino|bear crawl|superman|bird ?dog|ponte glutei isometric|tenuta|hang/i;
-function isTempoNome(nome){return TEMPO_NOMI.test(String(nome||""))}
-function isTempo(e){
-  if(!e)return false;
-  if(e.tempo===true)return true;
-  if(e.tempo===false)return false;              // scelta esplicita dell'utente: si rispetta
-  if(/sec|min|"|'/i.test(String(e.r||"")))return true;
-  return isTempoNome(e.n);
-}
-/* secondi di partenza sensati quando un esercizio a tempo arriva senza durata */
-const TEMPO_DEFAULT=40;
-const unitOf=e=>isTempo(e)?"sec":"rip";
-/* secondi previsti da una stringa tipo "40 sec", "30-45 sec", "1 min" */
-function tempoSec(r){
-  const t=String(r||"");
-  const min=t.match(/(\d+)\s*min/i);
-  if(min)return parseInt(min[1])*60;
-  const rng=t.match(/(\d+)\s*-\s*(\d+)/);
-  if(rng)return parseInt(rng[2]);
-  const one=t.match(/(\d+)/);
-  return one?parseInt(one[1]):0;
-}
-
 /* ---------------- progressive overload ---------------- */
 function topReps(r){
   r=String(r||"");
