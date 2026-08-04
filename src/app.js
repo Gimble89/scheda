@@ -15,7 +15,7 @@ const mem={};
 /* ---- versione applicazione e schema dati ----
    APP_VERSION cambia a ogni rilascio: serve a scavalcare la cache del browser.
    SCHEMA_VERSION cambia solo quando cambia la FORMA dei dati salvati. */
-const APP_VERSION="27.1";
+const APP_VERSION="27.2";
 const SCHEMA_VERSION=2;
 
 /* Migrazione versionata. Prima di toccare qualunque cosa salva una copia
@@ -248,6 +248,13 @@ function normState(st){
       if(!Array.isArray(e.sets))e.sets=[{w:e.w||0,r:"",done:false}];
       if(e.r==null)e.r="10"; if(e.rest==null)e.rest=90; if(e.inc==null)e.inc=2.5;
       if(e.w==null)e.w=0; if(e.n==null)e.n="Esercizio"; if(e.ic==null)e.ic="curl";
+      /* Isometrie gia' in scheda con ripetizioni al posto dei secondi: si
+         correggono una volta sola. Chi ha scelto esplicitamente il contrario
+         (tempo===false) non viene toccato. */
+      if(e.tempo===undefined&&isTempoNome(e.n)){
+        e.tempo=true;
+        if(!/sec|min/i.test(String(e.r||"")))e.r=(parseInt(e.r)>20?parseInt(e.r):TEMPO_DEFAULT)+" sec";
+      }
     });
   });
   if(!st.body)st.body=[];
@@ -503,12 +510,21 @@ function notify(title,body){
    stessa cosa per chi scrive di fretta.
    Conseguenze: l'etichetta diventa "sec", il tonnellaggio esclude l'esercizio
    (peso x secondi non e' un volume), e il suggerimento di sovraccarico tace. */
+/* Esercizi che per loro natura si misurano in secondi: le isometrie non hanno
+   ripetizioni da contare. Serve perche' quando uno di questi entra dalla
+   libreria eredita le ripetizioni generiche del suo gruppo (es. "15"), e senza
+   riconoscimento per nome resterebbe etichettato "rip" per sempre. */
+const TEMPO_NOMI=/plank|hollow|isometri|wall ?sit|dead ?hang|farmer|passeggiata del contadino|bear crawl|superman|bird ?dog|ponte glutei isometric|tenuta|hang/i;
+function isTempoNome(nome){return TEMPO_NOMI.test(String(nome||""))}
 function isTempo(e){
   if(!e)return false;
   if(e.tempo===true)return true;
-  if(e.tempo===false)return false;
-  return /sec|"|'|min/i.test(String(e.r||""));   // ricononoscimento di ripiego
+  if(e.tempo===false)return false;              // scelta esplicita dell'utente: si rispetta
+  if(/sec|min|"|'/i.test(String(e.r||"")))return true;
+  return isTempoNome(e.n);
 }
+/* secondi di partenza sensati quando un esercizio a tempo arriva senza durata */
+const TEMPO_DEFAULT=40;
 const unitOf=e=>isTempo(e)?"sec":"rip";
 /* secondi previsti da una stringa tipo "40 sec", "30-45 sec", "1 min" */
 function tempoSec(r){
@@ -994,6 +1010,8 @@ function openPicker(d){
       const li=LIBN[b.dataset.n];if(!li)return;
       const est=li.k>0?round(refs[li.ref]*li.k,li.st||2.5):0;
       const df=defaultsFor(li);
+      /* isometria: le ripetizioni generiche della libreria non hanno senso */
+      if(isTempoNome(li.n)&&!/sec|min/i.test(String(df.r||"")))df.r=TEMPO_DEFAULT+" sec";
       if(!await ask(`Aggiungo <b>${li.n}</b> al giorno ${d.id}?<br><small style="color:var(--soft)">3 serie × ${df.r} · ${est?fmt(est)+" kg (stima calibrata)":"corpo libero"} · pausa ${df.rest}s</small>`,"Aggiungi"))return;
       d.ex.push({n:li.n,ic:li.ic,img:"",w:est,inc:li.st||2.5,rest:df.rest,r:df.r,sets:mk(est,3),note:"",tag:"NUOVO"});
       save();closeModal();render();toast(`${li.n} aggiunto · ${est?fmt(est)+" kg":"corpo libero"}`);
@@ -3717,6 +3735,7 @@ function buildProgram(){
   }
   function mkEx(name){
     const li=LIBN[name];const df=defaultsFor(li);
+    if(li&&isTempoNome(li.n)&&!/sec|min/i.test(String(df.r||"")))df.r=TEMPO_DEFAULT+" sec";
     const est=li.k>0?round(refs[li.ref]*li.k,li.st||2.5):0;
     return {n:li.n,ic:li.ic,img:"",w:est,inc:li.st||2.5,rest:df.rest,r:df.r,sets:mk(est,li.k>=.8?4:3),note:"",tag:"GEN"};
   }
